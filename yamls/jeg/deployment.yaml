@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    component: enterprise-gateway
+  name: enterprise-gateway
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      gateway-selector: enterprise-gateway
+  strategy:
+    rollingUpdate:
+      maxSurge: 25%
+      maxUnavailable: 25%
+    type: RollingUpdate
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        app: enterprise-gateway
+        component: enterprise-gateway
+        gateway-selector: enterprise-gateway
+    spec:
+      containers:
+      - env:
+        - name: EG_PORT
+          value: "8888"
+        - name: EG_RESPONSE_PORT
+          value: "8877"
+        - name: EG_NAMESPACE
+          value: enterprise-gateway
+        - name: EG_KERNEL_CLUSTER_ROLE
+          value: kernel-controller
+        - name: EG_SHARED_NAMESPACE
+          value: "False"
+        - name: EG_MIRROR_WORKING_DIRS
+          value: "False"
+        - name: EG_CULL_IDLE_TIMEOUT
+          value: "3600"
+        - name: EG_CULL_CONNECTED
+          value: "False"
+        - name: EG_LOG_LEVEL
+          value: DEBUG
+        - name: EG_KERNEL_LAUNCH_TIMEOUT
+          value: "60"
+        - name: EG_ALLOWED_KERNELS
+          value: '["r_kubernetes","python_kubernetes","python_tf_kubernetes","python_tf_gpu_kubernetes","scala_kubernetes","spark_r_kubernetes","spark_python_kubernetes","spark_scala_kubernetes","spark_python_operator"]'
+        - name: EG_DEFAULT_KERNEL_NAME
+          value: python_kubernetes
+        - name: EG_INHERITED_ENVS
+          value: PATH
+        image: elyra/enterprise-gateway:3.2.1
+        imagePullPolicy: IfNotPresent
+        name: enterprise-gateway
+        ports:
+        - containerPort: 8888
+          protocol: TCP
+        - containerPort: 8877
+          protocol: TCP
+        resources: {}
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: enterprise-gateway-sa
+      serviceAccountName: enterprise-gateway-sa
+      terminationGracePeriodSeconds: 30

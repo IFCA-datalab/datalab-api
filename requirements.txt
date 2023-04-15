@@ -1,0 +1,9 @@
+python-jose[cryptography]
+passlib[bcrypt]
+fastapi
+fastapi-users
+fastapi-users[sqlalchemy]
+httpx-oauth
+kubernetes
+aiosqlite
+requests_oauth2client
