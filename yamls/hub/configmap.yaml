@@ -58,7 +58,6 @@ data:
     # hub_bind_url configures what the JupyterHub process within the hub pod's
     # container should listen to.
     hub_container_port = 8081
-    #c.JupyterHub.hub_bind_url = f"http://:{hub_container_port}"
 
     c.JupyterHub.ip = os.environ['PROXY_PUBLIC_SERVICE_HOST']
     c.JupyterHub.port = int(os.environ['PROXY_PUBLIC_SERVICE_PORT'])
@@ -103,14 +102,9 @@ data:
     #c.JupyterHub.hub_connect_port = int(os.environ['HUB_SERVICE_PORT'])
     host = os.environ['HUB_SERVICE_HOST']
     port = int(os.environ['HUB_SERVICE_PORT'])
-    #c.Jupyterhub.hub_connect_url = 'http://hub:8081'
-    #c.JupyterHub.hub_connect_url = (
-    #    f'http://{hub_connect_ip}:{os.environ["HUB_SERVICE_PORT"]}'
-    #)
-    
 
     c.JupyterHub.authenticator_class = 'jupyterhub.auth.DummyAuthenticator'
-    c.DummyAuthenticator.password = "REDACTED"
+    c.DummyAuthenticator.password = "PASSWD"
 
     c.KubeSpawner.fs_gid = 100
     c.KubeSpawner.gid = 100
@@ -125,7 +119,7 @@ data:
     c.JupyterHub.services = [
         {
             "name": "service-admin",
-            "api_token": "REDACTED",
+            "api_token": "APITOKEN",
         },
     ]
 
@@ -140,8 +134,6 @@ data:
                 "list:users",
                 "read:servers",
             ],
-    #        "users": ["aidaph"],
-    #        # assign role to our 'launcher' service
             "services":[
                 "service-admin",
             ],

@@ -18,14 +18,13 @@ from fastapi_users.db import SQLAlchemyUserDatabase
 
 from app.db import User, get_user_db
 
-SECRET = "SECRET"
+SECRET = "PASWD"
 
 import logging
 
 logging.basicConfig(level=logging.INFO)
 
-github_oauth_client = GitHubOAuth2("9a5d19cf055e2397d319", "07815d6bc0555033239abba32fea42fa864e07dc")
-#keycloak_oauth_client = KeycloakOauth2("datalab", "P3BTyqXREH1q0xTnkl4ItVLOn6rhEMeK")
+github_oauth_client = GitHubOAuth2("test", "testSecret")
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, uuid.UUID]):
     reset_password_token_secret = SECRET
@@ -48,10 +47,6 @@ bearer_transport.scheme = OAuth2AuthorizationCodeBearer(authorizationUrl="https:
                                                         tokenUrl="https://github.com/login/oauth/access_token",
                                                         scopes={"profile": "profile", "openid": "openid"})
 
-#bearer_transport.scheme = OAuth2AuthorizationCodeBearer(authorizationUrl="http://localhost:8080/realms/master/protocol/openid-connect/auth", 
-#                                                        tokenUrl="http://localhost:8080/realms/master/protocol/openid-connect/token",
-#                                                        scopes={"profile": "profile", "openid": "openid", "email": "email"})
-
 
 def get_jwt_strategy() -> JWTStrategy:
     return JWTStrategy(secret=SECRET, lifetime_seconds=3600)
@@ -61,6 +56,3 @@ auth_backend = AuthenticationBackend(name="jwt", transport=bearer_transport, get
 fastapi_users = FastAPIUsers[User, uuid.UUID](get_user_manager, [auth_backend])
 
 current_active_user = fastapi_users.current_user(active=True)
-
-async def get_current_user ():
-    return current_active_user
