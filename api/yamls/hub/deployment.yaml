@@ -1,0 +1,133 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  annotations:
+    deployment.kubernetes.io/revision: "5"
+  generation: 5
+  labels:
+    app: jupyterhub
+    chart: jupyterhub-2.0.0
+    component: hub
+    release: jupyterhub
+  name: hub
+  resourceVersion: "4422937"
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 1
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      app: jupyterhub
+      component: hub
+      release: jupyterhub
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: jupyterhub
+        component: hub
+        hub.jupyter.org/network-access-proxy-api: "true"
+        hub.jupyter.org/network-access-proxy-http: "true"
+ #       hub.jupyter.org/network-access-singleuser: "true"
+        release: jupyterhub
+    spec:
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - preference:
+              matchExpressions:
+              - key: hub.jupyter.org/node-purpose
+                operator: In
+                values:
+                - core
+            weight: 100
+      containers:
+      - args:
+        - jupyterhub
+        - --config
+        - /usr/local/etc/jupyterhub/jupyterhub_config.py
+        - --upgrade-db
+        env:
+        - name: PYTHONUNBUFFERED
+          value: "1"
+        - name: CONFIGPROXY_AUTH_TOKEN
+          valueFrom:
+            secretKeyRef:
+              key: hub.config.ConfigurableHTTPProxy.auth_token
+              name: hub
+        image: jupyterhub/k8s-hub:2.0.0
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 30
+          httpGet:
+            path: /hub/health
+            port: http
+            scheme: HTTP
+          initialDelaySeconds: 300
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 3
+        name: hub
+        ports:
+        - containerPort: 8081
+          name: http
+          protocol: TCP
+        readinessProbe:
+          failureThreshold: 1000
+          httpGet:
+            path: /hub/health
+            port: http
+            scheme: HTTP
+          periodSeconds: 2
+          successThreshold: 1
+          timeoutSeconds: 1
+        resources: {}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsGroup: 1000
+          runAsUser: 1000
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: File
+        volumeMounts:
+        - mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.py
+          name: config
+          subPath: jupyterhub_config.py
+        - mountPath: /usr/local/etc/jupyterhub/z2jh.py
+          name: config
+          subPath: z2jh.py
+        - mountPath: /usr/local/etc/jupyterhub/config/
+          name: config
+        - mountPath: /usr/local/etc/jupyterhub/secret/
+          name: secret
+        - mountPath: /srv/jupyterhub
+          name: pvc
+      dnsPolicy: ClusterFirst
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext:
+        fsGroup: 1000
+      serviceAccount: hub
+      serviceAccountName: hub
+      terminationGracePeriodSeconds: 30
+      tolerations:
+      - effect: NoSchedule
+        key: hub.jupyter.org/dedicated
+        operator: Equal
+        value: core
+      - effect: NoSchedule
+        key: hub.jupyter.org_dedicated
+        operator: Equal
+        value: core
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: hub
+        name: config
+      - name: secret
+        secret:
+          defaultMode: 420
+          secretName: hub
+      - name: pvc
+        persistentVolumeClaim:
+          claimName: hub-db-dir

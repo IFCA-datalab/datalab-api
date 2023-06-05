@@ -17,16 +17,17 @@ spec:
       serviceAccountName: hub
       containers:
         - name: hub
-          image: jupyterhub/k8s-hub:2.0.0
+          # image: kienmn97/jupyter-hub:1.1.0
+          image: jupyterhub/k8s-hub:3.0.0-0.dev.git.6143.h246f1f0c
           imagePullPolicy: Always
           command: ["jupyterhub", "--config", "/usr/local/etc/jupyterhub/jupyterhub_config.py","--upgrade-db"]
           ports:
             - containerPort: 8081
           env:
             - name: CONFIGPROXY_AUTH_TOKEN
-              value: AUTH_TOKEN 
+              value: REDACTED
             - name: COOKIE_SECRET
-              value: SECRET
+              value: REDACTED
           volumeMounts:
             - mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.py
               subPath: jupyterhub_config.py
@@ -36,8 +37,13 @@ spec:
               subPath: z2jh.py
             - mountPath: /usr/local/etc/jupyterhub/config/
               name: config
+            # - mountPath: /usr/local/etc/jupyterhub/secret/
+            #   name: secret
             - mountPath: /srv/jupyterhub
               name: hub-db-dir
+          # resources:
+          #   requests:
+          #     cpu: 100m
       securityContext:
         fsGroup: 0
       volumes:
@@ -45,6 +51,12 @@ spec:
           configMap:
             defaultMode: 420
             name: hub
+        #- name: config
+        #  configMap:
+        #    name: hub-config
+        # - name: secret
+        #   secret:
+        #     secretName: hub-secret
         - name: hub-db-dir
           persistentVolumeClaim:
             claimName: hub-db-dir

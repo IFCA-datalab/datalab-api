@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+    name: fastapi-app
+spec:
+    replicas: 1
+    selector:
+        matchLabels:
+            app: fastapi-app
+    template:
+        metadata:
+            labels:
+                app: fastapi-app
+        spec:
+            serviceAccountName: datalab-api-sa
+            containers:
+                - name: fastapi-app
+                  image: ghcr.io/ifca-datalab/datalab-api:latest
+                  ports:
+                      - containerPort: 8000
+                  volumeMounts:
+                  - name: secret
+                    mountPath: "/kube/config"
+                    subPath: config
+                  env:
+                  - name: KUBECONFIG
+                    value: /kube/config 
+            volumes:
+            - name: secret
+              secret:
+                  secretName: kube-config
+                  items: 
+                  - key: config
+                    path: config     
+---
+apiVersion: v1
+kind: Service
+metadata:
+    name: fastapi-service
+spec:
+    type: NodePort
+    selector:
+        app: fastapi-app
+    ports:
+        - protocol: TCP
+          port: 8000
+          targetPort: 8000
+          nodePort: 30001

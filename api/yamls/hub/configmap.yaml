@@ -58,6 +58,7 @@ data:
     # hub_bind_url configures what the JupyterHub process within the hub pod's
     # container should listen to.
     hub_container_port = 8081
+    #c.JupyterHub.hub_bind_url = f"http://:{hub_container_port}"
 
     c.JupyterHub.ip = os.environ['PROXY_PUBLIC_SERVICE_HOST']
     c.JupyterHub.port = int(os.environ['PROXY_PUBLIC_SERVICE_PORT'])
@@ -67,7 +68,7 @@ data:
 
     #c.KubeSpawner.image = "jupyter/pyspark-notebook:latest"
     #c.KubeSpawner.image="aidaph/pyspark-notebook:latest"
-    c.KubeSpawner.image="jupyterhub/k8s-singleuser-sample:2.0.0"
+    c.KubeSpawner.image="jupyterhub/k8s-singleuser-sample:3.0.0-0.dev.git.6143.h246f1f0c"
 
     c.KubeSpawner.service_account = "hub"
 
@@ -102,9 +103,14 @@ data:
     #c.JupyterHub.hub_connect_port = int(os.environ['HUB_SERVICE_PORT'])
     host = os.environ['HUB_SERVICE_HOST']
     port = int(os.environ['HUB_SERVICE_PORT'])
+    #c.Jupyterhub.hub_connect_url = 'http://hub:8081'
+    #c.JupyterHub.hub_connect_url = (
+    #    f'http://{hub_connect_ip}:{os.environ["HUB_SERVICE_PORT"]}'
+    #)
+    
 
     c.JupyterHub.authenticator_class = 'jupyterhub.auth.DummyAuthenticator'
-    c.DummyAuthenticator.password = "PASSWD"
+    c.DummyAuthenticator.password = "REDACTED"
 
     c.KubeSpawner.fs_gid = 100
     c.KubeSpawner.gid = 100
@@ -112,14 +118,20 @@ data:
     c.KubeSpawner.args = ['--allow-root']
     c.Spawner.cmd = ['jupyterhub-singleuser']
     def notebook_dir_hook(spawner):
-        spawner.environment = {'NB_USER':spawner.user.name, 'NB_UID':'1500', 'JUPYTER_GATEWAY_URL': 'http://enterprise-gateway.enterprise-gateway.svc.cluster.local:8888'}
+        spawner.environment = {'NB_USER':spawner.user.name, 
+                               'NB_UID':'1500', 
+                               'JUPYTER_GATEWAY_URL': 'http://enterprise-gateway.enterprise-gateway.svc.cluster.local:8888',
+                               'JUPYTER_GATEWAY_REQUEST_TIMEOUT': "900",
+                               'KERNEL_LAUNCH_TIMEOUT': "900"
+                               }
+        # spawner.environment = {'NB_USER':spawner.user.name, 'NB_UID':'1500', 'JUPYTER_GATEWAY_URL': 'http://enterprise-gateway.jeg-dummy.svc.cluster.local:8888'}
     c.Spawner.pre_spawn_hook = notebook_dir_hook
 
     # define our service
     c.JupyterHub.services = [
         {
             "name": "service-admin",
-            "api_token": "APITOKEN",
+            "api_token": "REDACTED",
         },
     ]
 
@@ -134,6 +146,8 @@ data:
                 "list:users",
                 "read:servers",
             ],
+    #        "users": ["aidaph"],
+    #        # assign role to our 'launcher' service
             "services":[
                 "service-admin",
             ],
