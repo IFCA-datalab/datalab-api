@@ -9,7 +9,7 @@ env:
   IMAGE_NAME: ${{ github.repository}}
 
 jobs:
-  build-and-push-image:
+  push-to_registry:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -35,7 +35,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
         with:
-          context: .
+          context: docker
+          file: Dockerfile
           push: true
           tags: ifca-datalab/api:latest
-          #labels: ${{ steps.meta.outputs.labels }}
+          labels: ${{ steps.meta.outputs.labels }}
