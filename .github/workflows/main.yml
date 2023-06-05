@@ -2,7 +2,7 @@ name: Build new package for the Datalab API
 
 on:
   push:
-    branches: ["release"]
+    branches: ["master"]
 
 env:
   REGISTRY: ghcr.io/ifca-datalab
