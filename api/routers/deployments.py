@@ -127,7 +127,7 @@ def create_jupyterhub_environment(namespace: str  = DeploymentType.dummy):
     create_rbac(namespace_name)
     create_configmap(namespace_name)
     create_pvc(namespace_name)
-    #create_ingress(namespace)
+    create_ingress(namespace)
 
     try:
         get_current_kubehubdeployments(namespace=namespace_name)
@@ -244,6 +244,37 @@ def create_rbac(namespace:str):
     resp = api_instance.create_namespaced_role_binding(namespace=namespace,
                                                        body=rolebinding)
     
+def create_ingress(namespace: str):
+    networking_v1_api = client.NetworkingV1Api()
+
+    body = client.V1Ingress(
+        api_version="networking.k8s.io/v1",
+        kind="Ingress",
+        metadata=client.V1ObjectMeta(name="ingress", annotations={
+            "kubernetes.io/ingress.class": "nginx"}),
+        spec = client.V1IngressSpec(
+            rules=[client.V1IngressRule(
+                host=f"{namespace}.datalab.ifca.es",
+                http=client.V1HTTPIngressRuleValue(
+                    paths=[client.V1HTTPIngressPath(
+                        path="/",
+                        path_type="Prefix",
+                        backend=client.V1IngressBackend(
+                            service=client.V1IngressServiceBackend(
+                                port=client.V1ServiceBackendPort(
+                                    number=80,
+                                ),
+                                name="proxy-public")
+                            )
+                    )]
+                )
+            )
+            ]
+        )
+    )
+
+    resp = networking_v1_api.create_namespaced_ingress(namespace="jupyterhub-"+namespace,
+                                                               body=body)
 
 def create_proxydeployments(namespace = str):
     ## Create the proxy deployment
