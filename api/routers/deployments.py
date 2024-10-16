@@ -11,6 +11,7 @@ from enum import Enum
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from kubernetes import client, config
 from kubernetes.client.models.v1_namespace import V1Namespace
+from kubernetes.client.models.v1_ingress_tls import V1IngressTLS
 from kubernetes.client.rest import ApiException
 
 from sqlalchemy.orm import Session
@@ -125,16 +126,18 @@ def create_jupyterhub_environment(namespace: str  = DeploymentType.dummy):
 
     # Create the whole Jupyterhub namespace in k8s
     create_rbac(namespace_name)
-    create_configmap(namespace_name)
+    create_configmap(namespace)
     create_pvc(namespace_name)
     create_ingress(namespace)
 
     try:
         get_current_kubehubdeployments(namespace=namespace_name)
-        create_hubdeployments(namespace_name)
+        #create_hubdeployments_token(namespace, token)
+        create_hubdeployments(namespace)
     except HTTPException:
         print("Hub exists in the namespace")
 
+    ## TODO
     url = f"https://{namespace}.datalab.ifca.es"
     return {"datalab-url: ": f"{url}"}
 
@@ -187,16 +190,17 @@ def create_services(namespace = DeploymentType.dummy):
         
 def create_configmap(namespace: str):
     # Create the configmap hub
-    with open("yamls/hub/configmap.yaml") as f:
+    with open("yamls/hub/configmaps/configmap-"+namespace+".yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_core_v1.create_namespaced_config_map(body=dep,
-                                                     namespace=namespace)
+                                                     namespace="jupyterhub-"+namespace)
         
 def create_pvc(namespace: str):
     with open("yamls/hub/pvc.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_core_v1.create_namespaced_persistent_volume_claim(body=dep,
                                                                      namespace=namespace)
+
 def create_rbac(namespace:str):
     ## Create the proxy-api service
     serviceaccount = client.V1ServiceAccount()
@@ -235,7 +239,7 @@ def create_rbac(namespace:str):
 
     metadata = client.V1ObjectMeta(name="hub",
                                                labels={"component":"jupyter"})
-    subjects = client.V1Subject(kind="ServiceAccount", 
+    subjects = client.RbacV1Subject(kind="ServiceAccount",
                                             name="hub")
     roleref = client.V1RoleRef(api_group="rbac.authorization.k8s.io", 
                                             kind ="Role", 
@@ -268,8 +272,11 @@ def create_ingress(namespace: str):
                             )
                     )]
                 )
-            )
-            ]
+            )],
+            tls=[client.V1IngressTLS(
+                hosts=[f"{namespace}.datalab.ifca.es"],
+                secret_name="cert-secret"
+            )]
         )
     )
 
@@ -278,6 +285,7 @@ def create_ingress(namespace: str):
 
 def create_proxydeployments(namespace = str):
     ## Create the proxy deployment
+
     with open("yamls/proxy/proxy-deployment.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_apps_v1.create_namespaced_deployment(body=dep, 
@@ -286,42 +294,83 @@ def create_proxydeployments(namespace = str):
 
 
 def create_hubdeployments(namespace = str):
+
+    pvc = client.V1PersistentVolumeClaim(
+                                #api_version="v1",
+                                #kind="PersistenVolumeClaim",
+                                metadata=client.V1ObjectMeta(name=namespace+"-data-shared",
+                                                            namespace="jupyterhub-"+namespace),
+                                spec=client.V1PersistentVolumeClaimSpec(
+                                    access_modes=["ReadWriteOnce"],
+                                    resources=client.V1VolumeResourceRequirements(requests={"storage":"50Gi"}),
+                                    storage_class_name="longhorn",
+                                    volume_mode="Filesystem"),
+                                status=client.V1PersistentVolumeClaimStatus(access_modes=[])
+    )
+    k8s_core_v1.create_namespaced_persistent_volume_claim(namespace="jupyterhub-"+namespace, 
+                                                        body=pvc)                                
     ## Create the hub deployment
     with open("yamls/hub/hub-deployment.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_apps_v1.create_namespaced_deployment(body=dep, 
-                                                        namespace=namespace)
+                                                        namespace="jupyterhub-"+namespace)
         print("Deployment Hub created. status='%s'" % resp)
 
     ## End: Once the jupyterhub is created the user can create new server
 
 
-@router.post("/{namespace}/kafka")
-def create_kafka(namespace = str):
+def create_hubdeployments_token(namespace = str, token = None):
+    ## Create the hub deployment
 
-    ## Create zookeeper service and deployment
-    with open("yamls/kafka/zookeeper-service.yaml") as f:
-        dep = yaml.safe_load(f)
-        resp = k8s_apps_v1.create_namespaced_service(body=dep,
-                                                     namespace=namespace)
-    with open("yamls/kafka/zookeeper-deployment.yaml") as f:
-        dep = yaml.safe_load(f)
-        resp = k8s_apps_v1.create_namespaced_deployment(body=dep,
-                                                        namespace=namespace)
-    
-    print("Zookeper created. status='%s'" % resp)
+    pvc = client.V1PersistentVolumeClaim(metadata=client.V1ObjectMeta(name=namespace+"-data-shared",
+                                                        namespace="jupyterhub-"+namespace),
+                                    spec=client.V1PersistentVolumeClaimSpec(
+                                    access_modes=["ReadWriteMany"],
+                                    resources=client.V1VolumeResourceRequirements(requests={"storage":"100Gi"}),
+                                    storage_class_name="longhorn",
+                                    volume_mode="Filesystem"),
+                                status=client.V1PersistentVolumeClaimStatus(access_modes=[])
+    )
+    k8s_core_v1.create_namespaced_persistent_volume_claim(namespace="jupyterhub-"+namespace, 
+                                                        body=pvc)              
 
-    ## Create zookeeper service and deployment
-    with open("yamls/kafka/broker-service.yaml") as f:
+    with open("yamls/hub/hub-deployment.yaml", "r") as f:
         dep = yaml.safe_load(f)
-        resp = k8s_apps_v1.create_namespaced_service(body=dep,
-                                                     namespace=namespace)
-    with open("yamls/kafka/broker-deployment.yaml") as f:
+    for container in dep["spec"]["template"]["spec"]["containers"]:
+        if "env" in container:
+            container["env"].append({
+                "name": "NAMESPACE",
+                "value": namespace
+            })
+            container["env"].append({
+                "name": "ACCESS_TOKEN",
+                "value": token
+            })
+    # Write the updated YAML data back to the file
+    with open("yamls/hub/hub-deployment.yaml", 'w') as file:
+        yaml.dump(dep, file)
+
+    with open("yamls/hub/hub-deployment.yaml") as f:
         dep = yaml.safe_load(f)
-        resp = k8s_apps_v1.create_namespaced_deployment(body=dep,
-                                                        namespace=namespace)
-    
-    print("Zookeper created. status='%s'" % resp)
+
+    resp = k8s_apps_v1.create_namespaced_deployment(body=dep,
+                                                    namespace="jupyterhub-"+namespace)
+    for container in dep["spec"]["template"]["spec"]["containers"]:
+        if "env" in container:
+            print("Try to remove container %s'" % container)
+            container["env"].remove({
+                "name": "NAMESPACE",
+                "value": namespace
+            })
+            container["env"].remove({
+                "name": "ACCESS_TOKEN",
+                "value": token
+            })
+
+    # Write the updated YAML data back to the file
+    with open("yamls/hub/hub-deployment.yaml", 'w') as file:
+        yaml.dump(dep, file)
+
 
 @router.post("/{namespace}/thredds")
 def create_thredds(namespace = str):
