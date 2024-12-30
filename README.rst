@@ -2,11 +2,11 @@
 DataLab Platform API
 ========================
 
-.. image:: https://img.shields.io/pypi/v/datalab_api.svg
-        :target: https://pypi.python.org/pypi/datalab_api
+.. image:: https://img.shields.io/pypi/v/datalab-api.svg
+        :target: https://pypi.python.org/pypi/datalab-api
 
-.. image:: https://img.shields.io/travis/aidaph/datalab_api.svg
-        :target: https://travis-ci.com/aidaph/datalab_api
+.. image:: https://img.shields.io/travis/IFCA-datalab/datalab-api.svg
+        :target: https://travis-ci.com/IFCA-datalab/datalab-api
 
 .. image:: https://readthedocs.org/projects/datalab-api/badge/?version=latest
         :target: https://datalab-api.readthedocs.io/en/latest/?version=latest
