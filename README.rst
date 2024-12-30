@@ -1,6 +1,6 @@
-===========
-DataLab API
-===========
+
+# DataLab API
+
 
 
 .. image:: https://img.shields.io/pypi/v/datalab_api.svg
