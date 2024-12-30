@@ -12,6 +12,10 @@ DataLab Platform API
         :target: https://datalab-api.readthedocs.io/en/latest/?version=latest
         :alt: Documentation Status
 
+.. image:: https://github.com/IFCA-datalab/datalab-api/actions/workflows/main.yml/badge.svg
+        :target: https://github.com/IFCA-datalab/datalab-api/actions/workflows/main.yml
+        :alt: Build new package for the Datalab API
+
 
 The DataLab is a platform for users whose main goal is the analysis of the data in a ready-to-use environment.
 The datalab get the data for inmediately use in a Jupyter platform where the backend resourses are provisioned dinamically on demand in a Kubernetes cluster.
