@@ -1,20 +1,26 @@
-from app.db import User #engine, async_session_maker
+from pathlib import Path
+
+BASE_DIR = Path(__file__).resolve().parents[1]
+YAMLS_DIR = BASE_DIR / "yamls/"
+
+from ..app.db import User #engine, async_session_maker
 #from models import deployment
 #from app.schemas import Deployment, DeploymentCreate
-from app.users import (
+from ..app.users import (
     current_active_user, 
     fastapi_users,
-    keycloak_oauth_client
+#    keycloak_oauth_client
 #    github_oauth_client
 )
 from enum import Enum
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from kubernetes import client, config
 from kubernetes.client.models.v1_namespace import V1Namespace
-from kubernetes.client.models.v1_ingress_tls import V1IngressTLS
 from kubernetes.client.rest import ApiException
+from pydantic import BaseModel
 
 from sqlalchemy.orm import Session
+import time
 from typing import Annotated
 
 import httpx
@@ -28,10 +34,53 @@ import yaml
 class DeploymentType(str, Enum):
     ids = "ids"
     climate = "ipcc"
-    master = "dataScienceHub"
+    master = "datasciencehub"
     dummy = "dummy"
     ## Add more
-    face = "FACE"
+    #face = "FACE"
+    kafka = "kafka"
+    spark = "spark"
+    #thredds = "thredds"
+
+
+class DeploymentTypeInfo(BaseModel):
+    type: str
+    label: str
+    description: str
+    icon: str
+
+DEPLOYMENT_TYPE_INFO = {
+    DeploymentType.ids: {
+        "label": "IDS",
+        "description": "Entorno orientado al análisis y visualización de datos de ciberseguridad.",
+        "icon": "📊",
+    },
+    DeploymentType.climate: {
+        "label": "Climate",
+        "description": "Entorno para análisis de datos climáticos y experimentación científica.",
+        "icon": "🌍",
+    },
+    DeploymentType.master: {
+        "label": "Data Science Hub",
+        "description": "Entorno generalista para el Máster de Ciencia de Datos, con herramientas y datasets variados.",
+        "icon": "📈",
+    },
+    DeploymentType.dummy: {
+        "label": "Dummy",
+        "description": "Entorno de prueba para validación funcional y despliegues de demostración.",
+        "icon": "🧪",
+    },
+    DeploymentType.kafka: {
+        "label": "Kafka",
+        "description": "Entorno orientado a mensajería, streaming y pruebas con brokers Kafka.",
+        "icon": "📨",
+    },
+    DeploymentType.spark: {
+        "label": "Spark",
+        "description": "Entorno para procesamiento distribuido y analítica sobre Apache Spark.",
+        "icon": "⚡",
+    },
+}
 
 router = APIRouter(
     prefix="/deployments",
@@ -50,33 +99,62 @@ def get_kubeappsapi():
 k8s_apps_v1 = get_kubeappsapi()
 k8s_core_v1 = get_kubecoreapi()
 
-def create_kube_namespace(name: str):
+def valid_deployment_types() -> list[str]:
+    return [item.value for item in DeploymentType]
+
+
+def ensure_valid_deployment_type(deployment_type: str) -> None:
+    if deployment_type not in valid_deployment_types():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Deployment name is not valid, please choose a valid type",
+        )
+
+
+def build_k8s_namespace(deployment_type: str) -> str:
+    return f"jupyterhub-{deployment_type}"
+
+
+def create_kube_namespace(deployment_type: str) -> str:
 
     v1 = get_kubecoreapi()
-    exception = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, 
-        detail="Namespace already exists", 
-        headers={"WWW-Authenticate": "Bearer"})
-    nameSpaceList = v1.list_namespace()
-    ### TODO: Create it only if is an acceptable name
-    for nameSpace in nameSpaceList.items:
-        if nameSpace.metadata.name == "jupyterhub-"+name:
-            raise exception
-            return nameSpace.metadata.name
-   
+
+    k8s_namespace = build_k8s_namespace(deployment_type)
+
+    existing = v1.list_namespace()
+    for item in existing.items:
+        if item.metadata.name == k8s_namespace:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Namespace already exists",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
     body = client.V1Namespace(
-        metadata=client.V1ObjectMeta(name="jupyterhub-"+name))
-    try: 
-        api_response = v1.create_namespace(body)
-        return api_response.metadata.name
+        metadata=client.V1ObjectMeta(name=k8s_namespace)
+    )
+
+    try:
+        response = v1.create_namespace(body=body)
+        return response.metadata.name
     except ApiException as e:
-        print("Exception when calling CoreV1Api->create_namespace: %s\n" % e)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error creating namespace: {e}",
+        ) from e
 
 
-@router.get("/types")
+@router.get("/types", response_model=list[DeploymentTypeInfo])
 def get_deployment_types():
-    types = [t for t in DeploymentType]
-    return types
-
+    return [
+        DeploymentTypeInfo(
+            type=deployment_type.value,
+            label=DEPLOYMENT_TYPE_INFO[deployment_type]["label"],
+            description=DEPLOYMENT_TYPE_INFO[deployment_type]["description"],
+            icon=DEPLOYMENT_TYPE_INFO[deployment_type]["icon"],
+        )
+        for deployment_type in DeploymentType
+    ]
 
 @router.get("/running")
 def get_running_jupyterhubs():
@@ -98,47 +176,42 @@ def get_running_jupyterhubs():
 
 
 @router.post("/{namespace}/jupyterhub")
-def create_jupyterhub_environment(namespace: str  = DeploymentType.dummy):
+def create_jupyterhub_environment(namespace: DeploymentType = DeploymentType.dummy) -> dict[str, Any]:
     """
     Create new jupyterhub environment inside the namespace = {server_name}
 
-    Valid types = dummy, ids, ipcc, datasciencehub, face
+    Valid types = dummy, ids, ipcc, datasciencehub, kakfa, spark
     """
-    exception = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, 
-        detail="Deployment name is not valid, please choose a valid type")
-    # Verify that namespace name is a valid type of the deployment type list
-    if namespace in get_deployment_types():
-        namespace_name = create_kube_namespace(namespace) # Check if exists
-    else:
-        raise exception
+    deployment_value = namespace.value
+    ensure_valid_deployment_type(deployment_value)
+    k8s_namespace = create_kube_namespace(deployment_value)
 
     # Check if the services are already created
     try:
-        get_current_kubeservices(namespace=namespace_name)
-        create_services(namespace_name)
+        get_current_kubeservices(namespace=k8s_namespace)
+        create_services(deployment_value, k8s_namespace)
     except HTTPException:
         print("There is services created in the namespace")
     try:
-        get_current_kubeproxydeployments(namespace=namespace_name)
-        create_proxydeployments(namespace_name)
+        get_current_kubeproxydeployments(namespace=k8s_namespace)
+        create_proxydeployments(k8s_namespace)
     except HTTPException:
         print("There is proxy created in the namespace")
 
     # Create the whole Jupyterhub namespace in k8s
-    create_rbac(namespace_name)
-    create_configmap(namespace)
-    create_pvc(namespace_name)
-    create_ingress(namespace)
+    create_rbac(deployment_value,k8s_namespace)
+    create_configmap(deployment_value,k8s_namespace)
+    create_pvc(deployment_value,k8s_namespace)
+    create_ingress(deployment_value,k8s_namespace)
+    wait_for_pvc_bound(k8s_namespace, "hub-db-dir")
 
     try:
-        get_current_kubehubdeployments(namespace=namespace_name)
-        #create_hubdeployments_token(namespace, token)
-        create_hubdeployments(namespace)
+        get_current_kubehubdeployments(namespace=k8s_namespace)
+        create_hubdeployments(k8s_namespace)
     except HTTPException:
         print("Hub exists in the namespace")
 
-    ## TODO
-    url = f"https://{namespace}.datalab.example.org"
+    url = f"https://{deployment_value}.es"
     return {"datalab-url: ": f"{url}"}
 
 @router.delete("/{namespace}/jupyterhub")
@@ -153,14 +226,14 @@ def get_url_jupyterhub_namespace(namespace: str = DeploymentType.dummy):
 
     Valid types = dummy, ids, ipcc, datasciencehub, face
     """
-    if namespace in get_deployment_types():
-        return {f"Jupyterhub for {namespace} is running at https://{namespace}.datalab.example.org"}
-    else:
-        exception = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, 
-        detail="Deployment name is not valid or does not exist")
-        raise exception
+    deployment_value = namespace.value
 
-def create_services(namespace = DeploymentType.dummy):
+    return {
+        "hubUrl":
+            f"https://{deployment_value}.es"
+    }
+
+def create_services(deployment_type: str, k8s_namespace: str) -> dict[str, Any]:
     
     ## Create the proxy-api service
     service = client.V1Service()
@@ -174,41 +247,43 @@ def create_services(namespace = DeploymentType.dummy):
                                        port=8001,
                                        target_port=8001)]
     service.spec = spec
-    k8s_core_v1.create_namespaced_service(namespace=namespace,
+    k8s_core_v1.create_namespaced_service(namespace=k8s_namespace,
                                           body=service)
 
-    with open("yamls/proxy/service.yaml") as f:
+    with open(YAMLS_DIR / "proxy" / "service.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_core_v1.create_namespaced_service(body=dep,
-                                                     namespace=namespace)
+                                                     namespace=k8s_namespace)
 
     ## Create the hub service
-    with open("yamls/hub/hub-service.yaml") as f:
+    with open(YAMLS_DIR / "hub" / "hub-service.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_core_v1.create_namespaced_service(body=dep,
-                                                     namespace=namespace)
-        
-def create_configmap(namespace: str):
+                                                     namespace=k8s_namespace)
+
+def create_configmap(deployment_type: str, k8s_namespace: str) -> dict[str, Any]:
     # Create the configmap hub
-    with open("yamls/hub/configmaps/configmap-"+namespace+".yaml") as f:
+    with open(YAMLS_DIR / "hub" / "configmaps" / f"configmap-{deployment_type}.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_core_v1.create_namespaced_config_map(body=dep,
-                                                     namespace="jupyterhub-"+namespace)
-        
-def create_pvc(namespace: str):
-    with open("yamls/hub/pvc.yaml") as f:
+                                                     namespace=k8s_namespace)
+
+
+def create_pvc(deployment_type: str, k8s_namespace: str) -> dict[str, Any]:
+    with open(YAMLS_DIR / "hub" / "pvc.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_core_v1.create_namespaced_persistent_volume_claim(body=dep,
-                                                                     namespace=namespace)
+                                                                     namespace=k8s_namespace)
 
-def create_rbac(namespace:str):
+
+def create_rbac(deployment_value: str, k8s_namespace: str):
     ## Create the proxy-api service
     serviceaccount = client.V1ServiceAccount()
     serviceaccount.api_version = "v1"
     serviceaccount.kind = "ServiceAccount"
     serviceaccount.metadata = client.V1ObjectMeta(name="hub", labels={"component":"jupyter"})
 
-    k8s_core_v1.create_namespaced_service_account(namespace=namespace,
+    k8s_core_v1.create_namespaced_service_account(namespace=k8s_namespace,
                                                   body=serviceaccount)
     
     # Enter a context with an instance of the API kubernetes.client
@@ -229,7 +304,7 @@ def create_rbac(namespace:str):
     rule2 = client.V1PolicyRule(api_groups=apigroup, resources=resources2, verbs=verb2)
     role.rules = [rule1, rule2]
 
-    resp = api_instance.create_namespaced_role(namespace=namespace,
+    resp = api_instance.create_namespaced_role(namespace=k8s_namespace,
                                                body = role)
     
     # Enter a context with an instance of the API kubernetes.client
@@ -239,54 +314,39 @@ def create_rbac(namespace:str):
 
     metadata = client.V1ObjectMeta(name="hub",
                                                labels={"component":"jupyter"})
-    subjects = client.RbacV1Subject(kind="ServiceAccount",
+    subjects = client.RbacV1Subject(kind="ServiceAccount", 
                                             name="hub")
     roleref = client.V1RoleRef(api_group="rbac.authorization.k8s.io", 
                                             kind ="Role", 
                                             name="hub")
     rolebinding = client.V1RoleBinding(metadata = metadata, subjects=[subjects], role_ref=roleref)
-    resp = api_instance.create_namespaced_role_binding(namespace=namespace,
+    resp = api_instance.create_namespaced_role_binding(namespace=k8s_namespace,
                                                        body=rolebinding)
     
-def create_ingress(namespace: str):
-    networking_v1_api = client.NetworkingV1Api()
 
-    body = client.V1Ingress(
-        api_version="networking.k8s.io/v1",
-        kind="Ingress",
-        metadata=client.V1ObjectMeta(name="ingress", annotations={
-            "kubernetes.io/ingress.class": "nginx"}),
-        spec = client.V1IngressSpec(
-            rules=[client.V1IngressRule(
-                host=f"{namespace}.datalab.example.org",
-                http=client.V1HTTPIngressRuleValue(
-                    paths=[client.V1HTTPIngressPath(
-                        path="/",
-                        path_type="Prefix",
-                        backend=client.V1IngressBackend(
-                            service=client.V1IngressServiceBackend(
-                                port=client.V1ServiceBackendPort(
-                                    number=80,
-                                ),
-                                name="proxy-public")
-                            )
-                    )]
-                )
-            )],
-            tls=[client.V1IngressTLS(
-                hosts=[f"{namespace}.datalab.example.org"],
-                secret_name="cert-secret"
-            )]
-        )
+def create_ingress(deployment_type: str, k8s_namespace: str):
+    manifest = yaml.safe_load((YAMLS_DIR / "hub" / "ingress.yaml").read_text())
+
+    manifest.setdefault("metadata", {})
+    manifest["metadata"]["namespace"] = k8s_namespace
+    manifest["metadata"]["name"] = "jupyterhub"
+
+    manifest["spec"]["rules"][0]["host"] = f"{deployment_type}.datalab.example.org"
+    manifest["spec"]["tls"][0]["hosts"][0] = f"{deployment_type}.datalab.example.org"
+    manifest["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["name"] = "proxy-public"
+    manifest["spec"]["rules"][0]["http"]["paths"][0]["backend"]["service"]["port"]["number"] = 80
+
+    networking_v1 = client.NetworkingV1Api()
+    return networking_v1.create_namespaced_ingress(
+        namespace=k8s_namespace,
+        body=manifest,
     )
 
-    resp = networking_v1_api.create_namespaced_ingress(namespace="jupyterhub-"+namespace,
-                                                               body=body)
 
 def create_proxydeployments(namespace = str):
     ## Create the proxy deployment
 
-    with open("yamls/proxy/proxy-deployment.yaml") as f:
+    with open(YAMLS_DIR / "proxy" / "proxy-deployment.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_apps_v1.create_namespaced_deployment(body=dep, 
                                              namespace=namespace)
@@ -294,33 +354,36 @@ def create_proxydeployments(namespace = str):
 
 
 def create_hubdeployments(namespace = str):
-
-    pvc = client.V1PersistentVolumeClaim(
-                                #api_version="v1",
-                                #kind="PersistenVolumeClaim",
-                                metadata=client.V1ObjectMeta(name=namespace+"-data-shared",
-                                                            namespace="jupyterhub-"+namespace),
-                                spec=client.V1PersistentVolumeClaimSpec(
-                                    access_modes=["ReadWriteOnce"],
-                                    resources=client.V1VolumeResourceRequirements(requests={"storage":"50Gi"}),
-                                    storage_class_name="longhorn",
-                                    volume_mode="Filesystem"),
-                                status=client.V1PersistentVolumeClaimStatus(access_modes=[])
-    )
-    k8s_core_v1.create_namespaced_persistent_volume_claim(namespace="jupyterhub-"+namespace, 
-                                                        body=pvc)                                
     ## Create the hub deployment
-    with open("yamls/hub/hub-deployment.yaml") as f:
+    with open(YAMLS_DIR / "hub" / "hub-deployment.yaml") as f:
         dep = yaml.safe_load(f)
         resp = k8s_apps_v1.create_namespaced_deployment(body=dep, 
-                                                        namespace="jupyterhub-"+namespace)
+                                                        namespace=namespace)
         print("Deployment Hub created. status='%s'" % resp)
 
     ## End: Once the jupyterhub is created the user can create new server
 
 
-def create_hubdeployments_token(namespace = str, token = None):
-    ## Create the hub deployment
+def wait_for_pvc_bound(namespace: str, pvc_name: str, timeout: int = 120, interval: int = 3) -> None:
+    v1 = get_kubecoreapi()
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        pvc = v1.read_namespaced_persistent_volume_claim(name=pvc_name, namespace=namespace)
+        phase = pvc.status.phase
+
+        if phase == "Bound":
+            return
+
+        time.sleep(interval)
+
+    raise HTTPException(
+        status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+        detail=f"PVC {pvc_name} in namespace {namespace} did not reach Bound state in time",
+    )
+
+@router.post("/{namespace}/kafka")
+def create_kafka(namespace = str):
 
     pvc = client.V1PersistentVolumeClaim(metadata=client.V1ObjectMeta(name=namespace+"-data-shared",
                                                         namespace="jupyterhub-"+namespace),
@@ -334,7 +397,7 @@ def create_hubdeployments_token(namespace = str, token = None):
     k8s_core_v1.create_namespaced_persistent_volume_claim(namespace="jupyterhub-"+namespace, 
                                                         body=pvc)              
 
-    with open("yamls/hub/hub-deployment.yaml", "r") as f:
+    with open(YAMLS_DIR + "hub" + "/hub-deployment.yaml", "r") as f:
         dep = yaml.safe_load(f)
     for container in dep["spec"]["template"]["spec"]["containers"]:
         if "env" in container:
@@ -347,11 +410,15 @@ def create_hubdeployments_token(namespace = str, token = None):
                 "value": token
             })
     # Write the updated YAML data back to the file
-    with open("yamls/hub/hub-deployment.yaml", 'w') as file:
+    with open(YAMLS_DIR + "hub" + "/hub-deployment.yaml", 'w') as file:
         yaml.dump(dep, file)
 
-    with open("yamls/hub/hub-deployment.yaml") as f:
+    with open(YAMLS_DIR + "hub" + "/hub-deployment.yaml") as f:
         dep = yaml.safe_load(f)
+        resp = k8s_apps_v1.create_namespaced_deployment(body=dep,
+                                                        namespace=namespace)
+    
+    print("Zookeper created. status='%s'" % resp)
 
     resp = k8s_apps_v1.create_namespaced_deployment(body=dep,
                                                     namespace="jupyterhub-"+namespace)
@@ -368,7 +435,7 @@ def create_hubdeployments_token(namespace = str, token = None):
             })
 
     # Write the updated YAML data back to the file
-    with open("yamls/hub/hub-deployment.yaml", 'w') as file:
+    with open(YAMLS_DIR + "hub" + "/hub-deployment.yaml", 'w') as file:
         yaml.dump(dep, file)
 
 
