@@ -18,9 +18,19 @@ spec:
       containers:
         - name: hub
           # image: kienmn97/jupyter-hub:1.1.0
-          image: jupyterhub/k8s-hub:3.0.0-0.dev.git.6143.h246f1f0c
+          #image: jupyterhub/k8s-hub:3.0.0-0.dev.git.6143.h246f1f0c
+          image: jupyterhub/k8s-hub:4.3.3
+          #image: ghcr.io/aidaph/jupyterhub:4.3.3-datalabauth-1
           imagePullPolicy: Always
-          command: ["jupyterhub", "--config", "/usr/local/etc/jupyterhub/jupyterhub_config.py","--upgrade-db"]
+          #command: ["jupyterhub", "--config", "/usr/local/etc/jupyterhub/jupyterhub_config.py","--upgrade-db"]
+          command:
+            - jupyterhub
+
+          args:
+            - --config
+            - /usr/local/etc/jupyterhub/jupyterhub_config.py
+            - --upgrade-db
+            
           ports:
             - containerPort: 8081
           env:
@@ -28,6 +38,11 @@ spec:
               value: REDACTED
             - name: COOKIE_SECRET
               value: REDACTED
+              env:
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           volumeMounts:
             - mountPath: /usr/local/etc/jupyterhub/jupyterhub_config.py
               subPath: jupyterhub_config.py
