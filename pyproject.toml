@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "datalab_api"
-version = "0.1.0"
+version = "0.2.0"
 description = "DataLab API to create environments in a K8s cluster"
 readme = "README.rst"
 authors = [
@@ -20,6 +20,11 @@ license = {text = "Apache Software License 2.0"}
 dependencies = [
   "typer"
 ]
+[tool.fastapi]
+entrypoint = "api.main:app"
+
+[tool.setuptools.packages.find]
+include = ["api*"]
 
 [project.optional-dependencies]
 dev = [
@@ -35,13 +40,12 @@ bugs = "https://github.com/IFCA-datalab/datalab-api/issues"
 changelog = "https://github.com/IFCA-datalab/datalab-api/blob/master/changelog.md"
 homepage = "https://github.com/IFCA-datalab/datalab-api"
 
-[tool.setuptools]
-package-dir = {"" = "src"}
 
 [tool.setuptools.package-data]
 "*" = ["*.*"]
 
-
+[project.entry-points."jupyterhub.authenticators"]
+datalab-oauth = "datalab_oauth:DatalabAuthenticator"
 
 
 # Mypy
