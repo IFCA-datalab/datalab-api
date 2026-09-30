@@ -1,12 +1,21 @@
-FROM tiangolo/uvicorn-gunicorn-fastapi:python3.9
+FROM python:3.12-slim
 
-RUN mkdir /kube
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    UV_PROJECT_ENVIRONMENT=/opt/venv \
+    PATH="/opt/venv/bin:$PATH"
 
 WORKDIR /app
 
-COPY ./requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir --upgrade -r /app/requirements.txt
+# Dependencies first, so they are cached across code changes
+COPY pyproject.toml uv.lock README.rst LICENSE ./
+RUN uv sync --locked --no-dev --no-install-project
 
-COPY ./api /app
-RUN cd /app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+COPY datalab_api ./datalab_api
+RUN uv sync --locked --no-dev
+
+USER nobody
+EXPOSE 8000
+CMD ["uvicorn", "--factory", "datalab_api.main:app", "--host", "0.0.0.0", "--port", "8000"]

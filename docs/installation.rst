@@ -12,7 +12,7 @@ To install DataLab API, run this command in your terminal:
 
 .. code-block:: console
 
-    $ pip install datalab_api
+    $ pip install ifca-datalab-api
 
 This is the preferred method to install DataLab API, as it will always install the most recent stable release.
 
@@ -32,20 +32,20 @@ You can either clone the public repository:
 
 .. code-block:: console
 
-    $ git clone git://github.com/aidaph/datalab_api
+    $ git clone https://github.com/IFCA-datalab/datalab-api.git
 
 Or download the `tarball`_:
 
 .. code-block:: console
 
-    $ curl -OJL https://github.com/aidaph/datalab_api/tarball/master
+    $ curl -OJL https://github.com/IFCA-datalab/datalab-api/tarball/master
 
 Once you have a copy of the source, you can install it with:
 
 .. code-block:: console
 
-    $ python setup.py install
+    $ uv sync
 
 
-.. _Github repo: https://github.com/aidaph/datalab_api
-.. _tarball: https://github.com/aidaph/datalab_api/tarball/master
+.. _Github repo: https://github.com/IFCA-datalab/datalab-api
+.. _tarball: https://github.com/IFCA-datalab/datalab-api/tarball/master
