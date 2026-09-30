@@ -17,7 +17,7 @@ DataLab Platform API
 .. image:: https://github.com/IFCA-datalab/datalab-api/actions/workflows/main.yml/badge.svg
         :target: https://github.com/IFCA-datalab/datalab-api/actions/workflows/main.yml
         :alt: Docker image
-        
+
 .. image:: https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json
         :target: https://github.com/astral-sh/ruff
         :alt: Ruff
@@ -147,4 +147,4 @@ Development
 Credits
 -------
 
-Developed at the Instituto de Física de Cantabria (IFCA). See ``AUTHORS.rst``.
+Developed by the Advanced Computing and E-Science Group at IFCA. See ``AUTHORS.rst``.

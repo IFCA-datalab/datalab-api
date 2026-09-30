@@ -5,10 +5,9 @@ Credits
 Development Lead
 ----------------
 
-* Aida Palacio Hoz <aidaph@ifca.unican.es>
+* Aida Palacio Hoz <aidaph@ifca.es>
 
 Contributors
 ------------
 
-* Andrés Heredia Canales <heredia@ifca.unican.es>
-* Marta Obregón Ruiz <obregonm@ifca.unican.es>
+* Andrés Heredia Canales <heredia@ifca.es>
