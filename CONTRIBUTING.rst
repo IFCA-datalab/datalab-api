@@ -87,8 +87,7 @@ Ready to contribute? Here's how to set up the project for local development.
 
 6. Submit a pull request through the GitHub website.
 
-Never commit secrets (``.env``, tokens, passwords): the "Secret scan" workflow
-fails the pull request if it finds any.
+Never commit secrets (``.env``, tokens, passwords).
 
 Pull Request Guidelines
 -----------------------
