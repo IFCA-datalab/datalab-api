@@ -71,7 +71,9 @@ class JupyterServer(BaseModel):
 
 
 class KafkaCreate(BaseModel):
-    replicas: int = Field(default=1, ge=1, le=5)
+    replicas: int = Field(
+        default=3, ge=1, le=5, description="Brokers; at most one per public host."
+    )
     client_password: SecretStr | None = Field(
         default=None,
         min_length=12,
@@ -85,6 +87,8 @@ class KafkaCluster(BaseModel):
     replicas: int
     ready_replicas: int
     bootstrap_servers: str
+    security_protocol: str = "SASL_SSL"
+    sasl_mechanism: str = "PLAIN"
     client_username: str = "kafkaclient1"
     created_by: str | None = None
 

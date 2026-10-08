@@ -84,12 +84,19 @@ data:
     c.KubeSpawner.storage_access_modes = ['ReadWriteOnce'] # Check if it is possible
     c.KubeSpawner.storage_capacity = '200Mi'
 
-    # Add volumes to singleuser pods
+    # Add volumes to singleuser pods: the user's home plus the shared data
+    # volume ("ipcc-data-shared", created by the API).
     c.KubeSpawner.volumes = [
         {
             'name': volume_name_template,
             'persistentVolumeClaim': {
                 'claimName': pvc_name_template
+            }
+        },
+        {
+            'name': 'ipcc-data',
+            'persistentVolumeClaim': {
+                'claimName': 'ipcc-data-shared'
             }
         }
     ]
@@ -97,31 +104,13 @@ data:
         {
             'mountPath': '/home/jovyan',
             'name': volume_name_template
+        },
+        {
+            'mountPath': '/home/jovyan/ipcc-shared',
+            'name': 'ipcc-data'
         }
     ]
 
-    # # Add volumes to singleuser pods
-    # # Mount volume for storage
-    # pvc_name_template = 'ipcc-data-shared'
-    # c.KubeSpawner.pvc_name_template = pvc_name_template
-    # volume_name_template = 'ipcc-data'
-
-    # # Add volumes to singleuser pods
-    # c.KubeSpawner.volumes = [
-    #     {
-    #         'name': volume_name_template,
-    #         'persistentVolumeClaim': {
-    #             'claimName': pvc_name_template
-    #         }
-    #     }
-    # ]
-    # c.KubeSpawner.volume_mounts = [
-    #     {
-    #         'mountPath': '/home/jovyan/ipcc-shared',
-    #         'name': volume_name_template
-    #     }
-    # ]
-    
     # # Gives spawned containers access to the API of the hub
     c.JupyterHub.hub_connect_ip = os.environ['HUB_SERVICE_HOST']
     #c.JupyterHub.hub_connect_port = int(os.environ['HUB_SERVICE_PORT'])
@@ -166,7 +155,14 @@ data:
                                'JUPYTER_GATEWAY_URL': 'http://enterprise-gateway.enterprise-gateway.svc.cluster.local:8888',
                                'JUPYTER_GATEWAY_REQUEST_TIMEOUT': "900",
                                'KERNEL_LAUNCH_TIMEOUT': "900",
-                               'KERNEL_NAMESPACE': "jupyterhub-ipcc"
+                               'KERNEL_NAMESPACE': "jupyterhub-ipcc",
+                               # Created by the API; lets Spark kernels manage
+                               # their executors in this namespace.
+                               'KERNEL_SERVICE_ACCOUNT_NAME': "kernel",
+                               # Kernels run in their own pods (Enterprise
+                               # Gateway): mount the shared data there too.
+                               'KERNEL_VOLUMES': '[{"name": "ipcc-data", "persistentVolumeClaim": {"claimName": "ipcc-data-shared"}}]',
+                               'KERNEL_VOLUME_MOUNTS': '[{"name": "ipcc-data", "mountPath": "/home/jovyan/ipcc-shared"}]'
                                }
         # spawner.environment = {'NB_USER':spawner.user.name, 'NB_UID':'1500', 'JUPYTER_GATEWAY_URL': 'http://enterprise-gateway.jeg-dummy.svc.cluster.local:8888'}
     c.Spawner.pre_spawn_hook = notebook_dir_hook

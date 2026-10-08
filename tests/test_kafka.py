@@ -12,8 +12,14 @@ def test_statefulset_never_contains_passwords(settings: Settings) -> None:
     container = sts.spec.template.spec.containers[0]
     env = {e.name: e for e in container.env}
 
-    jaas = env["KAFKA_LISTENER_NAME_SASL_PLAIN_SASL_JAAS_CONFIG"].value
-    assert "$(KAFKA_CLIENT_PASSWORD)" in jaas
+    for listener in ("INTERNAL", "EXTERNAL"):
+        jaas = env[f"KAFKA_LISTENER_NAME_{listener}_PLAIN_SASL_JAAS_CONFIG"].value
+        assert "$(KAFKA_CLIENT_PASSWORD)" in jaas
+    # $(VAR) is only expanded for variables defined earlier in the list.
+    names = [e.name for e in container.env]
+    assert names.index("KAFKA_CLIENT_PASSWORD") < names.index(
+        "KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG"
+    )
     assert (
         env["KAFKA_CLIENT_PASSWORD"].value_from.secret_key_ref.name
         == "kafka-credentials"
@@ -23,10 +29,50 @@ def test_statefulset_never_contains_passwords(settings: Settings) -> None:
     assert voters[2].startswith("2@kafka-2.kafka-headless.kafka.svc")
 
 
-def test_headless_service_for_statefulset_dns(settings: Settings) -> None:
-    headless, external = kafka.build_services(settings)
+def test_external_listener_is_sasl_ssl_with_wildcard_cert(settings: Settings) -> None:
+    sts = kafka.build_statefulset(settings, replicas=3)
+    pod = sts.spec.template.spec
+    env = {e.name: e.value for e in pod.containers[0].env}
+
+    protocols = dict(
+        item.split(":")
+        for item in env["KAFKA_LISTENER_SECURITY_PROTOCOL_MAP"].split(",")
+    )
+    assert protocols == {
+        "CONTROLLER": "PLAINTEXT",
+        "INTERNAL": "SASL_PLAINTEXT",
+        "EXTERNAL": "SASL_SSL",
+    }
+    assert env["KAFKA_INTER_BROKER_LISTENER_NAME"] == "INTERNAL"
+    assert env["KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEYSTORE_TYPE"] == "PEM"
+    tls = next(v for v in pod.volumes if v.name == "tls")
+    assert tls.secret.secret_name == settings.tls_secret_name
+    assert env["EXTERNAL_ADDRESSES"].split() == [
+        "kafka0.datalab.test:30090",
+        "kafka1.datalab.test:30091",
+        "kafka2.datalab.test:30092",
+    ]
+
+
+def test_each_broker_has_its_own_node_port(settings: Settings) -> None:
+    headless, *brokers = kafka.build_services(settings, replicas=3)
     assert headless.spec.cluster_ip == "None"
-    assert external.spec.ports[0].node_port == 30092
+    assert [s.spec.ports[0].node_port for s in brokers] == [30090, 30091, 30092]
+    assert [s.spec.selector["statefulset.kubernetes.io/pod-name"] for s in brokers] == [
+        "kafka-0",
+        "kafka-1",
+        "kafka-2",
+    ]
+
+
+def test_public_hosts_can_be_configured(settings: Settings) -> None:
+    settings.kafka_public_hosts = ["a.example.org", "b.example.org"]
+    assert (
+        kafka.bootstrap_servers(settings, 2)
+        == "a.example.org:30090,b.example.org:30091"
+    )
+    # Status of a cluster bigger than the configured hosts must not fail.
+    assert kafka.bootstrap_servers(settings, 3).count(",") == 1
 
 
 def test_create_kafka_returns_password_once(
@@ -41,10 +87,25 @@ def test_create_kafka_returns_password_once(
     secret = kube.core.create_namespaced_secret.call_args.kwargs["body"]
     assert secret.string_data["client-password"] == body["client_password"]
     assert kube.apps.create_namespaced_stateful_set.called
+    assert body["security_protocol"] == "SASL_SSL"
+    assert body["bootstrap_servers"] == (
+        "kafka0.datalab.test:30090,kafka1.datalab.test:30091"
+    )
+    services = [
+        c.kwargs["body"].metadata.name
+        for c in kube.core.create_namespaced_service.call_args_list
+    ]
+    assert services == ["kafka-headless", "kafka-0-external", "kafka-1-external"]
 
 
 def test_create_kafka_validates_input(app_client: TestClient, token_for) -> None:
-    for payload in ({"replicas": 0}, {"replicas": 9}, {"client_password": "short"}):
+    payloads = (
+        {"replicas": 0},
+        {"replicas": 9},
+        {"replicas": 4},  # only 3 public hosts
+        {"client_password": "short"},
+    )
+    for payload in payloads:
         response = app_client.post(
             "/deployments/kafka", json=payload, headers=token_for()
         )

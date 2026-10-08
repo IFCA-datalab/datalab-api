@@ -78,8 +78,12 @@ class Settings(BaseSettings):
     kafka_image: str = "docker.io/confluentinc/cp-kafka:7.6.0"
     kafka_storage_class: str = "cinder-csi"
     kafka_storage_size: str = "10Gi"
-    kafka_node_port: int = 30092
+    # Broker N is published on NodePort kafka_node_port_base + N.
+    kafka_node_port_base: int = 30090
+    # Public name of each broker, in order (broker N -> item N). The cluster
+    # can have at most this many brokers. Empty: kafka0.<base_domain>, ...
     kafka_public_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    kafka_max_brokers: int = 3
 
     @field_validator("cors_origins", "admin_users", "kafka_public_hosts", mode="before")
     @classmethod
@@ -117,6 +121,12 @@ class Settings(BaseSettings):
             and self.keycloak_client_secret
             and self.keycloak_callback_url
         )
+
+    @property
+    def kafka_broker_hosts(self) -> list[str]:
+        return self.kafka_public_hosts or [
+            f"kafka{i}.{self.base_domain}" for i in range(self.kafka_max_brokers)
+        ]
 
     @property
     def owner_annotation(self) -> str:

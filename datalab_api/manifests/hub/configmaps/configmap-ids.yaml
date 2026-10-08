@@ -161,7 +161,15 @@ data:
                                'JUPYTER_GATEWAY_REQUEST_TIMEOUT': "900",
                                'KERNEL_LAUNCH_TIMEOUT': "900",
                                'KERNEL_NAMESPACE': "jupyterhub-ids",
-                               'EG_ALLOWED_KERNELS': '["python_kubernetes","pyspark_delta_kubernetes","python_tf_kubernetes","python_tf_gpu_kubernetes","scala_kubernetes","spark_python_kubernetes","spark_scala_kubernetes","spark_python_operator"]'
+                               # Created by the API; lets Spark kernels manage
+                               # their executors in this namespace.
+                               'KERNEL_SERVICE_ACCOUNT_NAME': "kernel",
+                               # Kernels run in their own pods (Enterprise
+                               # Gateway): mount the shared data there too.
+                               # The kernels offered are set in the gateway
+                               # (kernel.allowedKernels), not here.
+                               'KERNEL_VOLUMES': '[{"name": "ids-data", "persistentVolumeClaim": {"claimName": "ids-data-shared"}}]',
+                               'KERNEL_VOLUME_MOUNTS': '[{"name": "ids-data", "mountPath": "/home/jovyan/ids-shared"}]'
                                }
         # spawner.environment = {'NB_USER':spawner.user.name, 'NB_UID':'1500', 'JUPYTER_GATEWAY_URL': 'http://enterprise-gateway.jeg-dummy.svc.cluster.local:8888'}
     c.Spawner.pre_spawn_hook = notebook_dir_hook

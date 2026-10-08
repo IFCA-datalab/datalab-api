@@ -17,11 +17,15 @@ rules:
     resources: [namespaces]
     verbs: [get, list, create, patch, delete]
   - apiGroups: [""]
-    resources: [configmaps, secrets, services, serviceaccounts]
+    resources: [secrets, serviceaccounts]
     verbs: [get, create]
-  # The API grants these to each hub's Role, so it must hold them itself.
+  # The API grants these to the "hub" and "kernel" Roles of each environment,
+  # so it must hold them itself (see tests/test_rbac.py).
   - apiGroups: [""]
-    resources: [pods, persistentvolumeclaims]
+    resources: [pods]
+    verbs: [get, watch, list, create, delete, deletecollection]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims, services, configmaps]
     verbs: [get, watch, list, create, delete]
   - apiGroups: [""]
     resources: [events]

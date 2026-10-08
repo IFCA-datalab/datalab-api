@@ -104,6 +104,47 @@ def build_role_binding() -> client.V1RoleBinding:
     )
 
 
+# Enterprise Gateway starts the kernels in the hub's namespace with this service
+# account (KERNEL_SERVICE_ACCOUNT_NAME in the hub config). Spark kernels need it
+# to create and clean up their executor pods.
+KERNEL_SERVICE_ACCOUNT = "kernel"
+KERNEL_ROLE_RULES = [
+    client.V1PolicyRule(
+        api_groups=[""],
+        resources=["pods"],
+        verbs=["get", "watch", "list", "create", "delete", "deletecollection"],
+    ),
+    client.V1PolicyRule(
+        api_groups=[""],
+        resources=["services", "configmaps", "persistentvolumeclaims"],
+        verbs=["get", "watch", "list", "create", "delete"],
+    ),
+]
+
+
+def build_kernel_rbac() -> tuple[
+    client.V1ServiceAccount, client.V1Role, client.V1RoleBinding
+]:
+    meta = client.V1ObjectMeta(
+        name=KERNEL_SERVICE_ACCOUNT, labels={"component": "kernel"}
+    )
+    return (
+        client.V1ServiceAccount(metadata=meta),
+        client.V1Role(metadata=meta, rules=KERNEL_ROLE_RULES),
+        client.V1RoleBinding(
+            metadata=meta,
+            subjects=[
+                client.RbacV1Subject(kind="ServiceAccount", name=KERNEL_SERVICE_ACCOUNT)
+            ],
+            role_ref=client.V1RoleRef(
+                api_group="rbac.authorization.k8s.io",
+                kind="Role",
+                name=KERNEL_SERVICE_ACCOUNT,
+            ),
+        ),
+    )
+
+
 def build_shared_pvc(
     settings: Settings, deployment_type: DeploymentType
 ) -> client.V1PersistentVolumeClaim:
@@ -182,6 +223,7 @@ def provision_environment(
     """
     ns = namespace_for(deployment_type)
     core, apps = kube.core, kube.apps
+    kernel_sa, kernel_role, kernel_binding = build_kernel_rbac()
     steps: list[tuple[str, Any, dict[str, Any]]] = [
         (
             "secret",
@@ -204,6 +246,17 @@ def provision_environment(
             "role binding",
             kube.rbac.create_namespaced_role_binding,
             {"body": build_role_binding()},
+        ),
+        (
+            "kernel service account",
+            core.create_namespaced_service_account,
+            {"body": kernel_sa},
+        ),
+        ("kernel role", kube.rbac.create_namespaced_role, {"body": kernel_role}),
+        (
+            "kernel role binding",
+            kube.rbac.create_namespaced_role_binding,
+            {"body": kernel_binding},
         ),
         (
             "configmap",

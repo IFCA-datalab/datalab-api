@@ -50,6 +50,7 @@ CATALOG: dict[DeploymentType, DeploymentTypeSpec] = {
             "Entorno para análisis de datos climáticos y experimentación científica."
         ),
         icon="🌍",
+        shared_storage=True,
         hub_username_claim="email",  # username_claim = "email" in configmap-ipcc
         keycloak_only=True,
     ),

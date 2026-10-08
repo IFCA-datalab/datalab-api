@@ -1,4 +1,14 @@
-"""Provisioning of a KRaft Kafka cluster with SASL/PLAIN authentication."""
+"""Provisioning of a KRaft Kafka cluster with SASL/PLAIN authentication.
+
+Every broker has two client listeners:
+
+* ``INTERNAL`` (SASL_PLAINTEXT) on the headless Service, for the brokers
+  themselves and for clients inside the cluster.
+* ``EXTERNAL`` (SASL_SSL) for clients outside: broker N is advertised as the
+  N-th public host on NodePort ``kafka_node_port_base + N``, through a Service
+  that only selects that broker's pod. TLS uses the wildcard certificate
+  (``tls_secret_name``) replicated into the namespace.
+"""
 
 import logging
 import secrets
@@ -20,13 +30,41 @@ log = logging.getLogger(__name__)
 APP_LABELS = {"app": "kafka"}
 NAME = "kafka"
 HEADLESS_SERVICE = "kafka-headless"
-EXTERNAL_SERVICE = "kafka-external"
 SECRET_NAME = "kafka-credentials"
 CLIENT_USERNAME = "kafkaclient1"
-SASL_PORT = 9092
+INTERNAL_PORT = 9092
+EXTERNAL_PORT = 9094
 CONTROLLER_PORT = 29093
+TLS_DIR = "/etc/kafka-tls"
+# Written at startup (key + certificate) because Kafka's PEM keystore wants
+# both in a single file.
+KEYSTORE_FILE = "/etc/kafka/keystore.pem"
 # Fixed so that pods keep their identity across restarts of the StatefulSet.
 CLUSTER_ID = "QZ0WG-zFRYquI54uiCfiTg"
+
+
+class TooManyBrokersError(ValueError):
+    pass
+
+
+def external_addresses(settings: Settings, replicas: int) -> list[str]:
+    """``host:port`` that each broker advertises to clients outside the cluster."""
+    hosts = settings.kafka_broker_hosts
+    if replicas > len(hosts):
+        raise TooManyBrokersError(
+            f"At most {len(hosts)} brokers (one per public host: {', '.join(hosts)})"
+        )
+    return [
+        f"{host}:{settings.kafka_node_port_base + i}"
+        for i, host in enumerate(hosts[:replicas])
+    ]
+
+
+def bootstrap_servers(settings: Settings, replicas: int) -> str:
+    # Clamped: a cluster that is still starting (0) or was created with other
+    # settings must not break its status page.
+    count = min(max(replicas, 1), len(settings.kafka_broker_hosts))
+    return ",".join(external_addresses(settings, count))
 
 
 def quorum_voters(settings: Settings, replicas: int) -> str:
@@ -34,6 +72,17 @@ def quorum_voters(settings: Settings, replicas: int) -> str:
     return ",".join(
         f"{i}@{NAME}-{i}.{HEADLESS_SERVICE}.{ns}.svc.cluster.local:{CONTROLLER_PORT}"
         for i in range(replicas)
+    )
+
+
+def jaas_config() -> str:
+    # $(VAR) is expanded by Kubernetes from the variables defined before it,
+    # so passwords never appear in the StatefulSet spec.
+    return (
+        "org.apache.kafka.common.security.plain.PlainLoginModule required "
+        'username="admin" password="$(KAFKA_ADMIN_PASSWORD)" '
+        'user_admin="$(KAFKA_ADMIN_PASSWORD)" '
+        f'user_{CLIENT_USERNAME}="$(KAFKA_CLIENT_PASSWORD)";'
     )
 
 
@@ -48,7 +97,11 @@ def build_secret(client_password: str) -> client.V1Secret:
     )
 
 
-def build_services(settings: Settings) -> list[client.V1Service]:
+def broker_service_name(index: int) -> str:
+    return f"{NAME}-{index}-external"
+
+
+def build_services(settings: Settings, replicas: int) -> list[client.V1Service]:
     headless = client.V1Service(
         metadata=client.V1ObjectMeta(name=HEADLESS_SERVICE, labels=APP_LABELS),
         spec=client.V1ServiceSpec(
@@ -57,34 +110,40 @@ def build_services(settings: Settings) -> list[client.V1Service]:
             selector=APP_LABELS,
             ports=[
                 client.V1ServicePort(
-                    name="tcp-kafka-sasl", port=SASL_PORT, target_port=SASL_PORT
+                    name="tcp-internal", port=INTERNAL_PORT, target_port=INTERNAL_PORT
                 ),
                 client.V1ServicePort(
-                    name="tcp-kafka-ctrl",
-                    port=CONTROLLER_PORT,
-                    target_port=CONTROLLER_PORT,
+                    name="tcp-ctrl", port=CONTROLLER_PORT, target_port=CONTROLLER_PORT
                 ),
             ],
         ),
     )
-    external = client.V1Service(
-        metadata=client.V1ObjectMeta(name=EXTERNAL_SERVICE, labels=APP_LABELS),
-        spec=client.V1ServiceSpec(
-            type="NodePort",
-            # Keep traffic on the node that received it, matching the advertised HOST_IP.
-            external_traffic_policy="Local",
-            selector=APP_LABELS,
-            ports=[
-                client.V1ServicePort(
-                    name="tcp-kafka-sasl",
-                    port=SASL_PORT,
-                    target_port=SASL_PORT,
-                    node_port=settings.kafka_node_port,
-                )
-            ],
-        ),
-    )
-    return [headless, external]
+    # One Service per broker: clients must reach the exact broker they were
+    # told about in the metadata, which a shared Service cannot guarantee.
+    brokers = [
+        client.V1Service(
+            metadata=client.V1ObjectMeta(
+                name=broker_service_name(i), labels=APP_LABELS
+            ),
+            spec=client.V1ServiceSpec(
+                type="NodePort",
+                selector={
+                    **APP_LABELS,
+                    "statefulset.kubernetes.io/pod-name": f"{NAME}-{i}",
+                },
+                ports=[
+                    client.V1ServicePort(
+                        name="tcp-external",
+                        port=EXTERNAL_PORT,
+                        target_port=EXTERNAL_PORT,
+                        node_port=settings.kafka_node_port_base + i,
+                    )
+                ],
+            ),
+        )
+        for i in range(replicas)
+    ]
+    return [headless, *brokers]
 
 
 def _env(name: str, value: str) -> client.V1EnvVar:
@@ -101,22 +160,18 @@ def _secret_env(name: str, key: str) -> client.V1EnvVar:
 
 
 def build_statefulset(settings: Settings, replicas: int) -> client.V1StatefulSet:
-    port = settings.kafka_node_port
+    ns = settings.kafka_namespace
     env = [
-        client.V1EnvVar(
-            name="HOST_IP",
-            value_from=client.V1EnvVarSource(
-                field_ref=client.V1ObjectFieldSelector(field_path="status.hostIP")
-            ),
-        ),
         _secret_env("KAFKA_ADMIN_PASSWORD", "admin-password"),
         _secret_env("KAFKA_CLIENT_PASSWORD", "client-password"),
+        # Space-separated; the startup script picks the one of this broker.
+        _env("EXTERNAL_ADDRESSES", " ".join(external_addresses(settings, replicas))),
         _env("KAFKA_HEAP_OPTS", "-Xms1g -Xmx3g"),
         _env("KAFKA_SASL_ENABLED_MECHANISMS", "PLAIN"),
         _env("KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL", "PLAIN"),
         _env(
             "KAFKA_LISTENER_SECURITY_PROTOCOL_MAP",
-            "CONTROLLER:PLAINTEXT,SASL:SASL_PLAINTEXT",
+            "CONTROLLER:PLAINTEXT,INTERNAL:SASL_PLAINTEXT,EXTERNAL:SASL_SSL",
         ),
         _env("CLUSTER_ID", CLUSTER_ID),
         _env("KAFKA_CONTROLLER_QUORUM_VOTERS", quorum_voters(settings, replicas)),
@@ -128,23 +183,26 @@ def build_statefulset(settings: Settings, replicas: int) -> client.V1StatefulSet
         _env("KAFKA_NUM_PARTITIONS", "3"),
         _env(
             "KAFKA_LISTENERS",
-            f"CONTROLLER://0.0.0.0:{CONTROLLER_PORT},SASL://0.0.0.0:{SASL_PORT}",
+            f"CONTROLLER://0.0.0.0:{CONTROLLER_PORT},"
+            f"INTERNAL://0.0.0.0:{INTERNAL_PORT},"
+            f"EXTERNAL://0.0.0.0:{EXTERNAL_PORT}",
         ),
-        _env("KAFKA_INTER_BROKER_LISTENER_NAME", "SASL"),
+        _env("KAFKA_INTER_BROKER_LISTENER_NAME", "INTERNAL"),
         _env("KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER"),
-        # $(VAR) is expanded by Kubernetes from the variables defined above,
-        # so passwords never appear in the StatefulSet spec.
-        _env(
-            "KAFKA_LISTENER_NAME_SASL_PLAIN_SASL_JAAS_CONFIG",
-            "org.apache.kafka.common.security.plain.PlainLoginModule required "
-            'username="admin" password="$(KAFKA_ADMIN_PASSWORD)" '
-            'user_admin="$(KAFKA_ADMIN_PASSWORD)" '
-            f'user_{CLIENT_USERNAME}="$(KAFKA_CLIENT_PASSWORD)";',
-        ),
+        _env("KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG", jaas_config()),
+        _env("KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG", jaas_config()),
+        _env("KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEYSTORE_TYPE", "PEM"),
+        _env("KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEYSTORE_LOCATION", KEYSTORE_FILE),
     ]
+    # Listener names (INTERNAL/EXTERNAL) rather than protocol names keep the
+    # Confluent image from demanding JKS keystores and a JAAS file.
     startup = (
         "export KAFKA_NODE_ID=${HOSTNAME##*-}; "
-        f"export KAFKA_ADVERTISED_LISTENERS=SASL://$HOST_IP:{port}; "
+        "set -- $EXTERNAL_ADDRESSES; shift $KAFKA_NODE_ID; "
+        "export KAFKA_ADVERTISED_LISTENERS="
+        f"INTERNAL://$HOSTNAME.{HEADLESS_SERVICE}.{ns}.svc.cluster.local:{INTERNAL_PORT},"
+        "EXTERNAL://$1; "
+        f"cat {TLS_DIR}/tls.key {TLS_DIR}/tls.crt > {KEYSTORE_FILE}; "
         "rm -rf /var/lib/kafka/data/lost+found; "
         "exec /etc/confluent/docker/run"
     )
@@ -155,18 +213,17 @@ def build_statefulset(settings: Settings, replicas: int) -> client.V1StatefulSet
         command=["/bin/sh", "-ec", startup],
         env=env,
         ports=[
-            client.V1ContainerPort(container_port=SASL_PORT, name="tcp-kafka-sasl"),
-            client.V1ContainerPort(
-                container_port=CONTROLLER_PORT, name="tcp-kafka-ctrl"
-            ),
+            client.V1ContainerPort(container_port=INTERNAL_PORT, name="tcp-internal"),
+            client.V1ContainerPort(container_port=EXTERNAL_PORT, name="tcp-external"),
+            client.V1ContainerPort(container_port=CONTROLLER_PORT, name="tcp-ctrl"),
         ],
         readiness_probe=client.V1Probe(
-            tcp_socket=client.V1TCPSocketAction(port="tcp-kafka-sasl"),
+            tcp_socket=client.V1TCPSocketAction(port="tcp-internal"),
             initial_delay_seconds=20,
             period_seconds=10,
         ),
         liveness_probe=client.V1Probe(
-            tcp_socket=client.V1TCPSocketAction(port="tcp-kafka-sasl"),
+            tcp_socket=client.V1TCPSocketAction(port="tcp-internal"),
             initial_delay_seconds=60,
             period_seconds=30,
             failure_threshold=6,
@@ -185,18 +242,40 @@ def build_statefulset(settings: Settings, replicas: int) -> client.V1StatefulSet
         ),
         volume_mounts=[
             client.V1VolumeMount(mount_path="/etc/kafka/", name="config"),
+            client.V1VolumeMount(mount_path=TLS_DIR, name="tls", read_only=True),
             client.V1VolumeMount(mount_path="/var/lib/kafka/data", name="data"),
             client.V1VolumeMount(mount_path="/var/log", name="logs"),
         ],
     )
+    # Spread brokers over nodes so that losing one node keeps the quorum.
+    spread = client.V1Affinity(
+        pod_anti_affinity=client.V1PodAntiAffinity(
+            preferred_during_scheduling_ignored_during_execution=[
+                client.V1WeightedPodAffinityTerm(
+                    weight=100,
+                    pod_affinity_term=client.V1PodAffinityTerm(
+                        label_selector=client.V1LabelSelector(match_labels=APP_LABELS),
+                        topology_key="kubernetes.io/hostname",
+                    ),
+                )
+            ]
+        )
+    )
     pod_spec = client.V1PodSpec(
         service_account_name=NAME,
+        affinity=spread,
         containers=[container],
         security_context=client.V1PodSecurityContext(fs_group=1000),
         termination_grace_period_seconds=30,
         volumes=[
             client.V1Volume(name="config", empty_dir=client.V1EmptyDirVolumeSource()),
             client.V1Volume(name="logs", empty_dir=client.V1EmptyDirVolumeSource()),
+            client.V1Volume(
+                name="tls",
+                secret=client.V1SecretVolumeSource(
+                    secret_name=settings.tls_secret_name
+                ),
+            ),
         ],
     )
     return client.V1StatefulSet(
@@ -222,13 +301,6 @@ def build_statefulset(settings: Settings, replicas: int) -> client.V1StatefulSet
                 )
             ],
         ),
-    )
-
-
-def bootstrap_servers(settings: Settings) -> str:
-    return ",".join(
-        f"{host}:{settings.kafka_node_port}"
-        for host in settings.kafka_public_hosts or ["<node-ip>"]
     )
 
 
@@ -270,7 +342,7 @@ def provision_kafka(
         ),
         *(
             (f"service {svc.metadata.name}", kube.core.create_namespaced_service, svc)
-            for svc in build_services(settings)
+            for svc in build_services(settings, replicas)
         ),
         (
             "statefulset",
@@ -325,7 +397,7 @@ def describe_kafka(kube: KubeClient, settings: Settings) -> KafkaCluster | None:
         status=state,
         replicas=replicas,
         ready_replicas=ready,
-        bootstrap_servers=bootstrap_servers(settings),
+        bootstrap_servers=bootstrap_servers(settings, replicas),
         client_username=CLIENT_USERNAME,
         created_by=annotations.get(settings.owner_annotation),
     )

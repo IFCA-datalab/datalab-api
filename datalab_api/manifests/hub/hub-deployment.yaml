@@ -6,6 +6,10 @@ metadata:
     component: jupyter
 spec:
   replicas: 1
+  # The hub database is a ReadWriteOnce volume: a rolling update would wait
+  # forever for the new pod to attach it on another node.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       component: jupyter

@@ -1,4 +1,4 @@
-"""Shared Kafka cluster (KRaft, SASL/PLAIN) in its own namespace."""
+"""Shared Kafka cluster (KRaft, SASL/PLAIN over TLS) in its own namespace."""
 
 import secrets
 
@@ -35,6 +35,10 @@ def create_kafka(
         else secrets.token_urlsafe(18)
     )
     try:
+        bootstrap = ",".join(kafka_svc.external_addresses(settings, body.replicas))
+    except kafka_svc.TooManyBrokersError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from None
+    try:
         kafka_svc.reserve_namespace(kube, settings, owner=user.sub)
     except kafka_svc.KafkaExistsError:
         raise HTTPException(
@@ -49,7 +53,7 @@ def create_kafka(
         status=EnvironmentStatus.provisioning,
         replicas=body.replicas,
         ready_replicas=0,
-        bootstrap_servers=kafka_svc.bootstrap_servers(settings),
+        bootstrap_servers=bootstrap,
         client_username=kafka_svc.CLIENT_USERNAME,
         created_by=user.sub,
         client_password=password,
