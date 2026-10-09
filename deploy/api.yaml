@@ -26,7 +26,7 @@ rules:
     verbs: [get, watch, list, create, delete, deletecollection]
   - apiGroups: [""]
     resources: [persistentvolumeclaims, services, configmaps]
-    verbs: [get, watch, list, create, delete]
+    verbs: [get, watch, list, create, delete, deletecollection]
   - apiGroups: [""]
     resources: [events]
     verbs: [get, watch, list]

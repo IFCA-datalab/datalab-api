@@ -117,7 +117,8 @@ KERNEL_ROLE_RULES = [
     client.V1PolicyRule(
         api_groups=[""],
         resources=["services", "configmaps", "persistentvolumeclaims"],
-        verbs=["get", "watch", "list", "create", "delete"],
+        # Spark 4 deletes its services and PVCs by label when it stops.
+        verbs=["get", "watch", "list", "create", "delete", "deletecollection"],
     ),
 ]
 

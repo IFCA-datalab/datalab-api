@@ -1,7 +1,8 @@
+import re
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, Field, SecretStr
+from pydantic import BaseModel, Field, SecretStr, field_validator
 
 
 class DeploymentTypeInfo(BaseModel):
@@ -74,11 +75,31 @@ class KafkaCreate(BaseModel):
     replicas: int = Field(
         default=3, ge=1, le=5, description="Brokers; at most one per public host."
     )
+    client_username: str = Field(
+        default="kafkaclient1",
+        pattern=r"^[A-Za-z][A-Za-z0-9._-]{2,31}$",
+        description="SASL/PLAIN user for clients ('admin' is reserved).",
+    )
     client_password: SecretStr | None = Field(
         default=None,
         min_length=12,
-        description="Password for the 'kafkaclient1' SASL user. Generated if omitted.",
+        description="Password for the client user. Generated if omitted.",
     )
+
+    @field_validator("client_username")
+    @classmethod
+    def _not_reserved(cls, value: str) -> str:
+        if value.lower() == "admin":
+            raise ValueError("'admin' is reserved for the brokers")
+        return value
+
+    @field_validator("client_password")
+    @classmethod
+    def _jaas_safe(cls, value: SecretStr | None) -> SecretStr | None:
+        # It goes inside a quoted JAAS value: no quotes, backslashes or spaces.
+        if value is not None and re.search(r'["\\\s]', value.get_secret_value()):
+            raise ValueError("must not contain quotes, backslashes or spaces")
+        return value
 
 
 class KafkaCluster(BaseModel):

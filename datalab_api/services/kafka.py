@@ -75,15 +75,19 @@ def quorum_voters(settings: Settings, replicas: int) -> str:
     )
 
 
-def jaas_config() -> str:
+def jaas_config(client_username: str) -> str:
     # $(VAR) is expanded by Kubernetes from the variables defined before it,
     # so passwords never appear in the StatefulSet spec.
     return (
         "org.apache.kafka.common.security.plain.PlainLoginModule required "
         'username="admin" password="$(KAFKA_ADMIN_PASSWORD)" '
         'user_admin="$(KAFKA_ADMIN_PASSWORD)" '
-        f'user_{CLIENT_USERNAME}="$(KAFKA_CLIENT_PASSWORD)";'
+        f'user_{client_username}="$(KAFKA_CLIENT_PASSWORD)";'
     )
+
+
+def client_username_annotation(settings: Settings) -> str:
+    return f"{settings.label_prefix}/kafka-client-username"
 
 
 def build_secret(client_password: str) -> client.V1Secret:
@@ -159,7 +163,9 @@ def _secret_env(name: str, key: str) -> client.V1EnvVar:
     )
 
 
-def build_statefulset(settings: Settings, replicas: int) -> client.V1StatefulSet:
+def build_statefulset(
+    settings: Settings, replicas: int, client_username: str = CLIENT_USERNAME
+) -> client.V1StatefulSet:
     ns = settings.kafka_namespace
     env = [
         _secret_env("KAFKA_ADMIN_PASSWORD", "admin-password"),
@@ -189,8 +195,14 @@ def build_statefulset(settings: Settings, replicas: int) -> client.V1StatefulSet
         ),
         _env("KAFKA_INTER_BROKER_LISTENER_NAME", "INTERNAL"),
         _env("KAFKA_CONTROLLER_LISTENER_NAMES", "CONTROLLER"),
-        _env("KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG", jaas_config()),
-        _env("KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG", jaas_config()),
+        _env(
+            "KAFKA_LISTENER_NAME_INTERNAL_PLAIN_SASL_JAAS_CONFIG",
+            jaas_config(client_username),
+        ),
+        _env(
+            "KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG",
+            jaas_config(client_username),
+        ),
         _env("KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEYSTORE_TYPE", "PEM"),
         _env("KAFKA_LISTENER_NAME_EXTERNAL_SSL_KEYSTORE_LOCATION", KEYSTORE_FILE),
     ]
@@ -308,7 +320,12 @@ class KafkaExistsError(Exception):
     pass
 
 
-def reserve_namespace(kube: KubeClient, settings: Settings, owner: str) -> None:
+def reserve_namespace(
+    kube: KubeClient,
+    settings: Settings,
+    owner: str,
+    client_username: str = CLIENT_USERNAME,
+) -> None:
     body = client.V1Namespace(
         metadata=client.V1ObjectMeta(
             name=settings.kafka_namespace,
@@ -316,7 +333,10 @@ def reserve_namespace(kube: KubeClient, settings: Settings, owner: str) -> None:
                 MANAGED_BY_LABEL: MANAGED_BY_VALUE,
                 settings.type_label: "kafka",
             },
-            annotations={settings.owner_annotation: owner},
+            annotations={
+                settings.owner_annotation: owner,
+                client_username_annotation(settings): client_username,
+            },
         )
     )
     try:
@@ -328,7 +348,11 @@ def reserve_namespace(kube: KubeClient, settings: Settings, owner: str) -> None:
 
 
 def provision_kafka(
-    kube: KubeClient, settings: Settings, replicas: int, client_password: str
+    kube: KubeClient,
+    settings: Settings,
+    replicas: int,
+    client_password: str,
+    client_username: str = CLIENT_USERNAME,
 ) -> None:
     ns = settings.kafka_namespace
     steps = [
@@ -347,7 +371,7 @@ def provision_kafka(
         (
             "statefulset",
             kube.apps.create_namespaced_stateful_set,
-            build_statefulset(settings, replicas),
+            build_statefulset(settings, replicas, client_username),
         ),
     ]
     step = "starting"
@@ -398,6 +422,9 @@ def describe_kafka(kube: KubeClient, settings: Settings) -> KafkaCluster | None:
         replicas=replicas,
         ready_replicas=ready,
         bootstrap_servers=bootstrap_servers(settings, replicas),
-        client_username=CLIENT_USERNAME,
+        # Clusters created before the user could be chosen have no annotation.
+        client_username=annotations.get(
+            client_username_annotation(settings), CLIENT_USERNAME
+        ),
         created_by=annotations.get(settings.owner_annotation),
     )

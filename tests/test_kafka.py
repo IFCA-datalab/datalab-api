@@ -130,3 +130,54 @@ def test_kafka_reports_its_creator(
     kube.apps.read_namespaced_stateful_set_status.side_effect = ApiException(status=404)
     body = app_client.get("/deployments/kafka", headers=token_for()).json()
     assert body["created_by"] == "github:1"
+
+
+def test_clients_choose_their_user(
+    app_client: TestClient, kube: MagicMock, settings: Settings, token_for
+) -> None:
+    from .conftest import make_namespace
+
+    response = app_client.post(
+        "/deployments/kafka",
+        json={
+            "replicas": 3,
+            "client_username": "bbuser",
+            "client_password": "A)kfJ1Ob-test",
+        },
+        headers=token_for(),
+    )
+    assert response.status_code == 202
+    assert response.json()["client_username"] == "bbuser"
+
+    namespace = kube.core.create_namespace.call_args.kwargs["body"]
+    annotation = kafka.client_username_annotation(settings)
+    assert namespace.metadata.annotations[annotation] == "bbuser"
+
+    sts = kube.apps.create_namespaced_stateful_set.call_args.kwargs["body"]
+    env = {e.name: e.value for e in sts.spec.template.spec.containers[0].env}
+    jaas = env["KAFKA_LISTENER_NAME_EXTERNAL_PLAIN_SASL_JAAS_CONFIG"]
+    assert 'user_bbuser="$(KAFKA_CLIENT_PASSWORD)"' in jaas
+    assert "A)kfJ1Ob-test" not in jaas
+
+    kube.get_namespace.return_value = make_namespace(
+        "kafka", owner="github:1", **{annotation: "bbuser"}
+    )
+    kube.apps.read_namespaced_stateful_set_status.side_effect = ApiException(status=404)
+    body = app_client.get("/deployments/kafka", headers=token_for()).json()
+    assert body["client_username"] == "bbuser"
+
+
+def test_client_user_and_password_are_validated(
+    app_client: TestClient, token_for
+) -> None:
+    for payload in (
+        {"client_username": "admin"},
+        {"client_username": "1user"},
+        {"client_username": "a b"},
+        {"client_password": 'with"quote1234'},
+        {"client_password": "with space 1234"},
+    ):
+        response = app_client.post(
+            "/deployments/kafka", json=payload, headers=token_for()
+        )
+        assert response.status_code == 422, payload

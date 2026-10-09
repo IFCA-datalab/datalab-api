@@ -39,14 +39,21 @@ def create_kafka(
     except kafka_svc.TooManyBrokersError as exc:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(exc)) from None
     try:
-        kafka_svc.reserve_namespace(kube, settings, owner=user.sub)
+        kafka_svc.reserve_namespace(
+            kube, settings, owner=user.sub, client_username=body.client_username
+        )
     except kafka_svc.KafkaExistsError:
         raise HTTPException(
             status.HTTP_409_CONFLICT, "A Kafka cluster already exists"
         ) from None
 
     background.add_task(
-        kafka_svc.provision_kafka, kube, settings, body.replicas, password
+        kafka_svc.provision_kafka,
+        kube,
+        settings,
+        body.replicas,
+        password,
+        body.client_username,
     )
     return KafkaCredentials(
         namespace=settings.kafka_namespace,
@@ -54,7 +61,7 @@ def create_kafka(
         replicas=body.replicas,
         ready_replicas=0,
         bootstrap_servers=bootstrap,
-        client_username=kafka_svc.CLIENT_USERNAME,
+        client_username=body.client_username,
         created_by=user.sub,
         client_password=password,
     )
