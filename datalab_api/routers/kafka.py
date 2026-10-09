@@ -8,6 +8,7 @@ from ..k8s import KubeDep
 from ..schemas import EnvironmentStatus, KafkaCluster, KafkaCreate, KafkaCredentials
 from ..security import SettingsDep, UserDep, ensure_can_manage
 from ..services import kafka as kafka_svc
+from .deployments import ensure_allowed
 
 router = APIRouter(prefix="/deployments/kafka", tags=["kafka"])
 
@@ -29,6 +30,7 @@ def create_kafka(
     The client password is returned **only in this response**; it is stored in
     the ``kafka-credentials`` Secret of the cluster namespace.
     """
+    ensure_allowed(user, settings, "kafka")
     password = (
         body.client_password.get_secret_value()
         if body.client_password

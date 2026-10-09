@@ -213,6 +213,9 @@ async def keycloak_callback(
             status.HTTP_400_BAD_REQUEST, "Keycloak user information incomplete"
         )
 
+    # Group membership mapper of the client: names, or paths if "full path" is on.
+    groups = [str(g).strip("/") for g in user.get("groups") or [] if g]
+
     token = create_access_token(
         settings,
         sub=str(sub),
@@ -220,5 +223,6 @@ async def keycloak_callback(
         name=user.get("name"),
         email=user.get("email"),
         provider="keycloak",
+        groups=groups,
     )
     return _redirect_to_portal(settings, token, str(login), None)

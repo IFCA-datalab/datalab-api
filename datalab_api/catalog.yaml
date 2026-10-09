@@ -1,0 +1,40 @@
+# Which DataLab services each group of users sees and can create.
+#
+# Groups are Keycloak groups of the "datalab" realm (claim "groups" of the
+# datalab-api client). Every signed-in user also belongs to `default_group`;
+# administrators (ADMIN_USERS) see everything. Override this file with the
+# CATALOG_FILE setting.
+
+default_group: general
+
+services:
+  # Deployable types (label, description and icon come from catalog.py).
+  - id: dummy
+    groups: [general]
+  - id: datasciencehub
+    groups: [general]
+  - id: spark
+    groups: [general]
+  - id: ids
+    groups: [ciberseguridad]
+  - id: kafka
+    groups: [ciberseguridad]
+  - id: ipcc
+    groups: [clima]
+
+  # Links to services that live elsewhere: the portal shows a card that opens
+  # `url` (an empty url shows "Coming soon").
+  - id: openondemand
+    kind: link
+    label: Open OnDemand
+    description: Web access to the IFCA HPC cluster, its files and batch jobs.
+    icon: "🖥️"
+    url: ""
+    groups: [general]
+  - id: rstudio
+    kind: link
+    label: RStudio
+    description: RStudio Server for R analyses in the browser.
+    icon: "📐"
+    url: ""
+    groups: [general]

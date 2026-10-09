@@ -92,7 +92,13 @@ def test_keycloak_callback(settings: Settings, kube) -> None:
             assert request.headers["authorization"].startswith("Basic ")
             return httpx.Response(200, json={"access_token": "kc-token"})
         return httpx.Response(
-            200, json={"sub": "abc", "preferred_username": "ana", "email": "ana@x.es"}
+            200,
+            json={
+                "sub": "abc",
+                "preferred_username": "ana",
+                "email": "ana@x.es",
+                "groups": ["clima", "/ciberseguridad"],
+            },
         )
 
     with TestClient(create_app(kc, kube=kube)) as client:
@@ -108,6 +114,8 @@ def test_keycloak_callback(settings: Settings, kube) -> None:
     user = decode_access_token(kc, params["token"][0])
     assert user.sub == "keycloak:abc"
     assert user.can_act_as("ana@x.es")
+    # Group names, with or without the "full path" of the Keycloak mapper.
+    assert user.groups == ["ciberseguridad", "clima"]
 
 
 def test_empty_env_vars_leave_integrations_disabled(monkeypatch) -> None:

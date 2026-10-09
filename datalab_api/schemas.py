@@ -20,6 +20,11 @@ class DeploymentTypeInfo(BaseModel):
     keycloak_only: bool = Field(
         default=False, description="The hub only accepts Keycloak (SSO) logins."
     )
+    kind: Literal["jupyterhub", "kafka", "link"] = Field(
+        default="jupyterhub",
+        description="'link' services are only a card that opens `url`.",
+    )
+    url: str | None = Field(default=None, description="Address of a 'link' service.")
 
 
 class EnvironmentStatus(StrEnum):
@@ -126,4 +131,5 @@ class UserInfo(BaseModel):
     name: str | None
     email: str | None
     provider: str
+    groups: list[str] = []
     is_admin: bool

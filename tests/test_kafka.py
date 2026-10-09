@@ -6,6 +6,9 @@ from kubernetes.client.rest import ApiException
 from datalab_api.config import Settings
 from datalab_api.services import kafka
 
+# catalog.yaml: Kafka is offered to the cybersecurity group.
+KAFKA_GROUPS = ["ciberseguridad"]
+
 
 def test_statefulset_never_contains_passwords(settings: Settings) -> None:
     sts = kafka.build_statefulset(settings, replicas=3)
@@ -79,7 +82,9 @@ def test_create_kafka_returns_password_once(
     app_client: TestClient, kube: MagicMock, token_for
 ) -> None:
     response = app_client.post(
-        "/deployments/kafka", json={"replicas": 2}, headers=token_for()
+        "/deployments/kafka",
+        json={"replicas": 2},
+        headers=token_for(groups=KAFKA_GROUPS),
     )
     assert response.status_code == 202
     body = response.json()
@@ -107,13 +112,18 @@ def test_create_kafka_validates_input(app_client: TestClient, token_for) -> None
     )
     for payload in payloads:
         response = app_client.post(
-            "/deployments/kafka", json=payload, headers=token_for()
+            "/deployments/kafka", json=payload, headers=token_for(groups=KAFKA_GROUPS)
         )
         assert response.status_code == 422
 
 
 def test_get_kafka_404_when_absent(app_client: TestClient, token_for) -> None:
-    assert app_client.get("/deployments/kafka", headers=token_for()).status_code == 404
+    assert (
+        app_client.get(
+            "/deployments/kafka", headers=token_for(groups=KAFKA_GROUPS)
+        ).status_code
+        == 404
+    )
 
 
 def test_kafka_reports_its_creator(
@@ -122,13 +132,17 @@ def test_kafka_reports_its_creator(
     from .conftest import make_namespace
 
     created = app_client.post(
-        "/deployments/kafka", json={"replicas": 1}, headers=token_for()
+        "/deployments/kafka",
+        json={"replicas": 1},
+        headers=token_for(groups=KAFKA_GROUPS),
     )
     assert created.json()["created_by"] == "github:1"
 
     kube.get_namespace.return_value = make_namespace("kafka", owner="github:1")
     kube.apps.read_namespaced_stateful_set_status.side_effect = ApiException(status=404)
-    body = app_client.get("/deployments/kafka", headers=token_for()).json()
+    body = app_client.get(
+        "/deployments/kafka", headers=token_for(groups=KAFKA_GROUPS)
+    ).json()
     assert body["created_by"] == "github:1"
 
 
@@ -144,7 +158,7 @@ def test_clients_choose_their_user(
             "client_username": "bbuser",
             "client_password": "A)kfJ1Ob-test",
         },
-        headers=token_for(),
+        headers=token_for(groups=KAFKA_GROUPS),
     )
     assert response.status_code == 202
     assert response.json()["client_username"] == "bbuser"
@@ -163,7 +177,9 @@ def test_clients_choose_their_user(
         "kafka", owner="github:1", **{annotation: "bbuser"}
     )
     kube.apps.read_namespaced_stateful_set_status.side_effect = ApiException(status=404)
-    body = app_client.get("/deployments/kafka", headers=token_for()).json()
+    body = app_client.get(
+        "/deployments/kafka", headers=token_for(groups=KAFKA_GROUPS)
+    ).json()
     assert body["client_username"] == "bbuser"
 
 
@@ -178,6 +194,6 @@ def test_client_user_and_password_are_validated(
         {"client_password": "with space 1234"},
     ):
         response = app_client.post(
-            "/deployments/kafka", json=payload, headers=token_for()
+            "/deployments/kafka", json=payload, headers=token_for(groups=KAFKA_GROUPS)
         )
         assert response.status_code == 422, payload

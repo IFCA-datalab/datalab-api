@@ -1,10 +1,14 @@
 """Application settings, loaded from environment variables (or a ``.env`` file)."""
 
 from functools import lru_cache
-from typing import Annotated
+from pathlib import Path
+from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field, HttpUrl, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from .catalog import ServiceCatalog
 
 
 class Settings(BaseSettings):
@@ -27,6 +31,9 @@ class Settings(BaseSettings):
         default_factory=list,
         description="Logins/emails allowed to manage any environment.",
     )
+
+    # Who sees which service (catalog.yaml inside the package if unset).
+    catalog_file: str | None = None
 
     # --- DataLab JWT -------------------------------------------------------
     jwt_secret: SecretStr = Field(min_length=32)
@@ -127,6 +134,13 @@ class Settings(BaseSettings):
         return self.kafka_public_hosts or [
             f"kafka{i}.{self.base_domain}" for i in range(self.kafka_max_brokers)
         ]
+
+    @property
+    def service_catalog(self) -> "ServiceCatalog":
+        from .catalog import SERVICE_CATALOG_FILE, load_service_catalog
+
+        path = Path(self.catalog_file) if self.catalog_file else SERVICE_CATALOG_FILE
+        return load_service_catalog(path)
 
     @property
     def owner_annotation(self) -> str:

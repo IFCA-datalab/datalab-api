@@ -6,13 +6,21 @@ from kubernetes import client
 from ..catalog import (
     CATALOG,
     NAMESPACE_PREFIX,
+    CatalogEntry,
     DeploymentType,
     jupyterhub_available,
     namespace_for,
 )
+from ..config import Settings
 from ..k8s import KubeDep
 from ..schemas import DeploymentTypeInfo, Environment, EnvironmentStatus
-from ..security import SettingsDep, UserDep, ensure_can_manage
+from ..security import (
+    CurrentUser,
+    OptionalUserDep,
+    SettingsDep,
+    UserDep,
+    ensure_can_manage,
+)
 from ..services import environments as envs
 
 router = APIRouter(prefix="/deployments", tags=["deployments"])
@@ -26,24 +34,57 @@ def _ensure_deployable(deployment_type: DeploymentType) -> None:
         )
 
 
-@router.get("/types")
-def list_deployment_types() -> list[DeploymentTypeInfo]:
-    """Catalog of environment types offered by the DataLab."""
-    return [
-        DeploymentTypeInfo(
-            type=deployment_type.value,
-            label=spec.label,
-            description=spec.description,
-            icon=spec.icon,
-            hub_username_claim=spec.hub_username_claim,
-            keycloak_only=spec.keycloak_only,
-            available=(
-                deployment_type is DeploymentType.kafka
-                or jupyterhub_available(deployment_type)
-            ),
+def ensure_allowed(user: CurrentUser, settings: Settings, service_id: str) -> None:
+    """Users may only create the services of their groups (catalog.yaml)."""
+    if not settings.service_catalog.allows(service_id, user.groups, user.is_admin):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"'{service_id}' is not available to your groups",
         )
-        for deployment_type, spec in CATALOG.items()
-    ]
+
+
+def _type_info(entry: CatalogEntry) -> DeploymentTypeInfo:
+    if entry.kind == "link":
+        return DeploymentTypeInfo(
+            type=entry.id,
+            label=entry.label or entry.id,
+            description=entry.description or "",
+            icon=entry.icon or "🔗",
+            available=bool(entry.url),
+            kind="link",
+            url=entry.url,
+        )
+    deployment_type = DeploymentType(entry.id)
+    spec = CATALOG[deployment_type]
+    return DeploymentTypeInfo(
+        type=deployment_type.value,
+        label=spec.label,
+        description=spec.description,
+        icon=spec.icon,
+        hub_username_claim=spec.hub_username_claim,
+        keycloak_only=spec.keycloak_only,
+        available=(
+            deployment_type is DeploymentType.kafka
+            or jupyterhub_available(deployment_type)
+        ),
+        kind=entry.kind,
+    )
+
+
+@router.get("/types")
+def list_deployment_types(
+    user: OptionalUserDep, settings: SettingsDep
+) -> list[DeploymentTypeInfo]:
+    """Services offered by the DataLab.
+
+    Signed in: only those of the user's groups (all for administrators).
+    Anonymous: the whole catalog, for the public help page.
+    """
+    catalog = settings.service_catalog
+    entries = (
+        catalog.visible(user.groups, user.is_admin) if user else list(catalog.entries)
+    )
+    return [_type_info(entry) for entry in entries]
 
 
 @router.get("/running")
@@ -88,6 +129,7 @@ def create_environment(
     Returns immediately; poll ``GET`` on the same path until ``status`` is
     ``ready`` (or ``failed``).
     """
+    ensure_allowed(user, settings, deployment_type.value)
     _ensure_deployable(deployment_type)
     try:
         namespace = envs.reserve_namespace(

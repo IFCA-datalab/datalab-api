@@ -20,6 +20,8 @@ class CurrentUser(BaseModel):
     name: str | None = None
     email: str | None = None
     provider: str
+    # Keycloak groups (claim "groups"); empty for GitHub users.
+    groups: list[str] = []
     is_admin: bool = False
 
     def identities(self) -> set[str]:
@@ -37,6 +39,7 @@ def create_access_token(
     provider: str,
     name: str | None = None,
     email: str | None = None,
+    groups: list[str] | None = None,
 ) -> str:
     now = datetime.now(UTC)
     claims = {
@@ -46,6 +49,7 @@ def create_access_token(
         "name": name,
         "email": email,
         "provider": provider,
+        "groups": sorted(groups or []),
         "iat": now,
         "exp": now + timedelta(hours=settings.jwt_ttl_hours),
     }
@@ -104,5 +108,16 @@ def ensure_can_manage(
     )
 
 
+def get_optional_user(
+    settings: Annotated[Settings, Depends(get_settings)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> CurrentUser | None:
+    """The user if a token is sent (public endpoints that adapt to the user)."""
+    if credentials is None:
+        return None
+    return decode_access_token(settings, credentials.credentials)
+
+
 UserDep = Annotated[CurrentUser, Depends(get_current_user)]
+OptionalUserDep = Annotated[CurrentUser | None, Depends(get_optional_user)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]

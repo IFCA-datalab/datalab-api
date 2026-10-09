@@ -56,10 +56,18 @@ def app_client(settings: Settings, kube: MagicMock) -> Iterator[TestClient]:
 @pytest.fixture
 def token_for(settings: Settings) -> Callable[..., dict[str, str]]:
     def make(
-        login: str = "alice", sub: str = "1", email: str | None = None
+        login: str = "alice",
+        sub: str = "1",
+        email: str | None = None,
+        groups: list[str] | None = None,
     ) -> dict[str, str]:
         token = create_access_token(
-            settings, sub=sub, login=login, email=email, provider="github"
+            settings,
+            sub=sub,
+            login=login,
+            email=email,
+            provider="github",
+            groups=groups,
         )
         return {"Authorization": f"Bearer {token}"}
 

@@ -6,6 +6,8 @@ from functools import cache
 from pathlib import Path
 from typing import Literal
 
+import yaml
+
 MANIFESTS_DIR = Path(__file__).parent / "manifests"
 NAMESPACE_PREFIX = "jupyterhub-"
 
@@ -100,3 +102,81 @@ def jupyterhub_available(deployment_type: DeploymentType) -> bool:
 
 def namespace_for(deployment_type: DeploymentType | str) -> str:
     return f"{NAMESPACE_PREFIX}{deployment_type}"
+
+
+# --- Who sees what: catalog.yaml ------------------------------------------------
+
+SERVICE_CATALOG_FILE = Path(__file__).parent / "catalog.yaml"
+ServiceKind = Literal["jupyterhub", "kafka", "link"]
+
+
+@dataclass(frozen=True)
+class CatalogEntry:
+    id: str
+    kind: ServiceKind
+    groups: frozenset[str]
+    # Only for links (deployable types take them from CATALOG).
+    label: str | None = None
+    description: str | None = None
+    icon: str | None = None
+    url: str | None = None
+
+
+@dataclass(frozen=True)
+class ServiceCatalog:
+    default_group: str
+    entries: tuple[CatalogEntry, ...]
+
+    def groups_of(self, user_groups: list[str]) -> set[str]:
+        """Every signed-in user also belongs to the default group."""
+        return {*user_groups, self.default_group}
+
+    def visible(self, user_groups: list[str], is_admin: bool) -> list[CatalogEntry]:
+        groups = self.groups_of(user_groups)
+        return [e for e in self.entries if is_admin or e.groups & groups]
+
+    def allows(self, service_id: str, user_groups: list[str], is_admin: bool) -> bool:
+        return any(e.id == service_id for e in self.visible(user_groups, is_admin))
+
+
+def _kind_of(service_id: str) -> ServiceKind:
+    return "kafka" if service_id == DeploymentType.kafka else "jupyterhub"
+
+
+@cache
+def load_service_catalog(path: Path = SERVICE_CATALOG_FILE) -> ServiceCatalog:
+    """Read catalog.yaml. Deployable types left out of it are admin-only."""
+    data = yaml.safe_load(path.read_text())
+    deployable = {t.value for t in DeploymentType}
+    entries = []
+    for item in data["services"]:
+        service_id = str(item["id"])
+        kind: ServiceKind | None = item.get("kind") or (
+            _kind_of(service_id) if service_id in deployable else None
+        )
+        if kind != "link" and service_id not in deployable:
+            raise ValueError(f"{path}: '{service_id}' is not a deployment type")
+        if kind is None or kind not in ("jupyterhub", "kafka", "link"):
+            raise ValueError(f"{path}: '{service_id}' has an invalid kind")
+        if kind == "link" and not item.get("label"):
+            raise ValueError(f"{path}: link '{service_id}' needs a label")
+        entries.append(
+            CatalogEntry(
+                id=service_id,
+                kind=kind,
+                groups=frozenset(item.get("groups") or []),
+                label=item.get("label"),
+                description=item.get("description"),
+                icon=item.get("icon"),
+                url=item.get("url") or None,
+            )
+        )
+    listed = {e.id for e in entries}
+    entries += [
+        CatalogEntry(id=t, kind=_kind_of(t), groups=frozenset())
+        for t in sorted(deployable - listed)
+    ]
+    return ServiceCatalog(
+        default_group=str(data.get("default_group", "general")),
+        entries=tuple(entries),
+    )

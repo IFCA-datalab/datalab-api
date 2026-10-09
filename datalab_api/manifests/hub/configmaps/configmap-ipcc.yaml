@@ -134,18 +134,26 @@ data:
     public_name = namespace.removeprefix("jupyterhub-")
 
     c.JupyterHub.authenticator_class = GenericOAuthenticator
-    c.GenericOAuthenticator.client_id = "datalab"
-    c.GenericOAuthenticator.client_secret = os.environ["OAUTH_CLIENT_SECRET"]
     c.GenericOAuthenticator.login_service = "SSO"
+    # Same Keycloak client as the portal/API and the other hubs ("datalab"
+    # does not exist in the realm).
+    c.GenericOAuthenticator.client_id = "datalab-api"
+    c.GenericOAuthenticator.client_secret = os.environ["OAUTH_CLIENT_SECRET"]
     c.GenericOAuthenticator.authorize_url = f"{oidc_url}/auth"
     c.GenericOAuthenticator.token_url = f"{oidc_url}/token"
     c.GenericOAuthenticator.userdata_url = f"{oidc_url}/userinfo"
     c.GenericOAuthenticator.oauth_callback_url = (
         f"https://{public_name}.{os.environ['HUB_BASE_DOMAIN']}/hub/oauth_callback"
     )
-    c.GenericOAuthenticator.scope = ["openid", "profile", "email", "groups"]
-    c.GenericOAuthenticator.userdata_params = {"state": "state"}
+    c.GenericOAuthenticator.scope = ["openid", "profile", "email"]
+    # The JupyterHub username is the user's email (see catalog.py)
     c.GenericOAuthenticator.username_claim = "email"
+    # The Keycloak client uses client_secret_basic
+    c.GenericOAuthenticator.basic_auth = True
+    # Allow any authenticated user (JupyterHub 5 / OAuthenticator 17)
+    c.GenericOAuthenticator.allow_all = True
+    # TODO: temporary, until the Keycloak certificate issue is fixed
+    c.GenericOAuthenticator.validate_server_cert = False
 
     c.KubeSpawner.args = ['--allow-root']
     c.Spawner.cmd = ['jupyterhub-singleuser']
